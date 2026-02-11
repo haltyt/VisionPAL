@@ -1,0 +1,18 @@
+import SwiftUI
+
+@main
+struct VisionPALApp: App {
+    @StateObject private var robotController = RobotController()
+    
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
+                .environmentObject(robotController)
+        }
+        
+        ImmersiveSpace(id: "ImmersiveControl") {
+            ImmersiveControlView()
+                .environmentObject(robotController)
+        }
+    }
+}
