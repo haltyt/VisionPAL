@@ -1,105 +1,129 @@
 import SwiftUI
-import Foundation
 
-/// MJPEG ストリームをSwiftUIで表示するビュー
+/// MJPEGストリームをSwiftUIで表示するビュー
 struct MJPEGView: View {
     let url: URL
-    @StateObject private var stream = MJPEGStream()
+    @StateObject private var loader = MJPEGLoader()
     
     var body: some View {
         Group {
-            if let image = stream.currentImage {
+            if let image = loader.currentFrame {
                 Image(uiImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
             } else {
                 ZStack {
                     Color.black
-                    VStack {
+                    if loader.isConnecting {
                         ProgressView()
-                            .scaleEffect(2)
-                            .padding()
-                        Text("Connecting to JetBot camera...")
-                            .foregroundColor(.white)
+                            .tint(.white)
+                    } else {
+                        VStack(spacing: 8) {
+                            Image(systemName: "video.slash")
+                                .font(.largeTitle)
+                                .foregroundColor(.gray)
+                            Text("No Signal")
+                                .foregroundColor(.gray)
+                                .font(.caption)
+                        }
                     }
                 }
             }
         }
-        .onAppear {
-            stream.start(url: url)
-        }
-        .onDisappear {
-            stream.stop()
+        .onAppear { loader.start(url: url) }
+        .onDisappear { loader.stop() }
+        .onChange(of: url) { _, newURL in
+            loader.stop()
+            loader.start(url: newURL)
         }
     }
 }
 
-/// MJPEG ストリームパーサー
-class MJPEGStream: NSObject, ObservableObject, URLSessionDataDelegate {
-    @Published var currentImage: UIImage?
+/// URLSessionでMJPEGストリームを受信し、JPEGフレームを抽出
+@MainActor
+class MJPEGLoader: NSObject, ObservableObject {
+    @Published var currentFrame: UIImage?
+    @Published var isConnecting = false
     
     private var session: URLSession?
     private var dataTask: URLSessionDataTask?
     private var buffer = Data()
     
-    // JPEG マーカー
+    // JPEG markers
     private let jpegStart = Data([0xFF, 0xD8])
     private let jpegEnd = Data([0xFF, 0xD9])
     
     func start(url: URL) {
+        stop()
+        isConnecting = true
+        
         let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 10
         config.requestCachePolicy = .reloadIgnoringLocalCacheData
-        config.timeoutIntervalForRequest = 30
         
+        // delegateQueue=nil → background
         session = URLSession(configuration: config, delegate: self, delegateQueue: nil)
-        
-        var request = URLRequest(url: url)
-        request.cachePolicy = .reloadIgnoringLocalCacheData
-        
-        dataTask = session?.dataTask(with: request)
+        dataTask = session?.dataTask(with: url)
         dataTask?.resume()
-        
-        print("[MJPEG] Connecting to \(url)")
     }
     
     func stop() {
         dataTask?.cancel()
-        session?.invalidateAndCancel()
-        print("[MJPEG] Stopped")
+        dataTask = nil
+        session?.invalidateAndCancelTasks()
+        session = nil
+        buffer.removeAll()
+        isConnecting = false
     }
-    
-    // URLSessionDataDelegate - データ受信時
-    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-        buffer.append(data)
+}
+
+extension MJPEGLoader: URLSessionDataDelegate {
+    nonisolated func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        // URLSession delegate callback — off main actor
+        let jpegStart = Data([0xFF, 0xD8])
+        let jpegEnd = Data([0xFF, 0xD9])
         
-        // バッファからJPEGフレームを抽出
-        while let frame = extractJPEG() {
-            if let image = UIImage(data: frame) {
-                DispatchQueue.main.async {
-                    self.currentImage = image
+        // Accumulate data into a local copy, then dispatch frames to MainActor
+        // We need to work with buffer on main actor since it's a property
+        Task { @MainActor in
+            self.buffer.append(data)
+            self.isConnecting = false
+            
+            // 複数フレーム対応ループ
+            while true {
+                guard let startRange = self.buffer.range(of: jpegStart) else { break }
+                guard let endRange = self.buffer.range(of: jpegEnd, in: startRange.lowerBound..<self.buffer.endIndex) else { break }
+                
+                let frameRange = startRange.lowerBound..<endRange.upperBound
+                let frameData = self.buffer.subdata(in: frameRange)
+                
+                // フレームより前のゴミデータを捨てる
+                self.buffer.removeSubrange(self.buffer.startIndex..<endRange.upperBound)
+                
+                if let image = UIImage(data: frameData) {
+                    self.currentFrame = image
                 }
             }
-        }
-        
-        // バッファが大きくなりすぎたらリセット
-        if buffer.count > 5_000_000 {
-            buffer.removeAll()
+            
+            // バッファ肥大防止（1MB超えたらリセット）
+            if self.buffer.count > 1_000_000 {
+                self.buffer.removeAll()
+            }
         }
     }
     
-    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+    nonisolated func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         if let error = error {
-            print("[MJPEG] Error: \(error.localizedDescription)")
+            print("[MJPEG] Stream error: \(error.localizedDescription)")
         }
-    }
-    
-    private func extractJPEG() -> Data? {
-        guard let startRange = buffer.range(of: jpegStart) else { return nil }
-        guard let endRange = buffer.range(of: jpegEnd, in: startRange.lowerBound..<buffer.endIndex) else { return nil }
-        
-        let jpegData = buffer[startRange.lowerBound..<endRange.upperBound]
-        buffer.removeSubrange(buffer.startIndex..<endRange.upperBound)
-        
-        return Data(jpegData)
+        // 自動再接続（3秒後）
+        Task { @MainActor in
+            self.isConnecting = true
+            self.currentFrame = nil
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            if let url = task.originalRequest?.url {
+                self.start(url: url)
+            }
+        }
     }
 }

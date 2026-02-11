@@ -2,85 +2,218 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject var robot: RobotController
+    @EnvironmentObject var voiceStyle: VoiceStyleController
     @Environment(\.openImmersiveSpace) var openImmersiveSpace
     @Environment(\.dismissImmersiveSpace) var dismissImmersiveSpace
     @State private var isImmersive = false
     
     var body: some View {
-        VStack(spacing: 30) {
-            // Header
-            Text("Vision PAL 🐾")
-                .font(.largeTitle)
-                .bold()
-            
-            // Connection Status
-            HStack {
-                Circle()
-                    .fill(robot.isConnected ? .green : .red)
-                    .frame(width: 12, height: 12)
-                Text(robot.isConnected ? "Connected" : "Disconnected")
-                    .foregroundColor(.secondary)
+        HStack(spacing: 30) {
+            // 左: カメラ + 操作
+            VStack(spacing: 20) {
+                // Header
+                Text("Vision PAL 🐾")
+                    .font(.largeTitle)
+                    .bold()
+                
+                // Connection Status
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(robot.isConnected ? .green : .red)
+                        .frame(width: 12, height: 12)
+                    Text(robot.isConnected ? "MQTT Connected" : "Disconnected")
+                        .foregroundColor(.secondary)
+                        .font(.caption)
+                }
+                
+                // Camera Feed — SD変換済みかJetBot直接か切替
+                let cameraURL = voiceStyle.isStreamDiffusionEnabled
+                    ? voiceStyle.transformedStreamURL
+                    : robot.cameraURL
+                
+                MJPEGView(url: cameraURL)
+                    .frame(width: 640, height: 480)
+                    .cornerRadius(16)
+                    .shadow(radius: 10)
+                    .overlay(
+                        // スタイル表示バッジ
+                        Group {
+                            if voiceStyle.isStreamDiffusionEnabled {
+                                Text(voiceStyle.lastCommand)
+                                    .font(.caption)
+                                    .padding(6)
+                                    .background(.ultraThinMaterial)
+                                    .cornerRadius(8)
+                            }
+                        },
+                        alignment: .topTrailing
+                    )
+                
+                // Manual Controls
+                controlPad
+                
+                // Immersive Mode Toggle
+                Toggle("🎯 Head Tracking Mode", isOn: $isImmersive)
+                    .toggleStyle(.button)
+                    .onChange(of: isImmersive) { _, newValue in
+                        Task {
+                            if newValue {
+                                await openImmersiveSpace(id: "ImmersiveControl")
+                            } else {
+                                await dismissImmersiveSpace()
+                            }
+                        }
+                    }
             }
             
-            // Camera Feed
-            MJPEGView(url: robot.cameraURL)
-                .frame(width: 640, height: 480)
-                .cornerRadius(16)
-                .shadow(radius: 10)
+            // 右: ボイススタイルパネル
+            voiceStylePanel
+        }
+        .padding(40)
+        .onAppear {
+            voiceStyle.requestPermissions()
+        }
+    }
+    
+    // MARK: - Control Pad
+    
+    private var controlPad: some View {
+        VStack(spacing: 16) {
+            Text("Manual Control")
+                .font(.headline)
             
-            // Manual Controls (for testing)
-            VStack(spacing: 16) {
-                Text("Manual Control")
-                    .font(.headline)
+            VStack(spacing: 8) {
+                Button("⬆️ Forward") {
+                    robot.move(direction: .forward, speed: 0.4)
+                }
+                .buttonStyle(.borderedProminent)
                 
-                // Direction buttons
-                VStack(spacing: 8) {
-                    Button("⬆️ Forward") {
-                        robot.move(direction: .forward, speed: 0.4)
+                HStack(spacing: 20) {
+                    Button("⬅️ Left") {
+                        robot.move(direction: .left, speed: 0.4)
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.bordered)
                     
-                    HStack(spacing: 20) {
-                        Button("⬅️ Left") {
-                            robot.move(direction: .left, speed: 0.4)
-                        }
-                        .buttonStyle(.bordered)
-                        
-                        Button("🛑 Stop") {
-                            robot.move(direction: .stop)
-                        }
-                        .buttonStyle(.bordered)
-                        .tint(.red)
-                        
-                        Button("➡️ Right") {
-                            robot.move(direction: .right, speed: 0.4)
-                        }
-                        .buttonStyle(.bordered)
+                    Button("🛑 Stop") {
+                        robot.move(direction: .stop)
                     }
+                    .buttonStyle(.bordered)
+                    .tint(.red)
                     
-                    Button("⬇️ Backward") {
-                        robot.move(direction: .backward, speed: 0.3)
+                    Button("➡️ Right") {
+                        robot.move(direction: .right, speed: 0.4)
                     }
                     .buttonStyle(.bordered)
                 }
-            }
-            .padding()
-            .background(.ultraThinMaterial)
-            .cornerRadius(16)
-            
-            // Immersive Mode Toggle
-            Toggle("🎯 Head Tracking Mode", isOn: $isImmersive)
-                .toggleStyle(.button)
-                .onChange(of: isImmersive) { _, newValue in
-                    Task {
-                        if newValue {
-                            await openImmersiveSpace(id: "ImmersiveControl")
-                        } else {
-                            await dismissImmersiveSpace()
-                        }
-                    }
+                
+                Button("⬇️ Backward") {
+                    robot.move(direction: .backward, speed: 0.3)
                 }
+                .buttonStyle(.bordered)
+            }
         }
-        .padding(40)
+        .padding()
+        .background(.ultraThinMaterial)
+        .cornerRadius(16)
+    }
+    
+    // MARK: - Voice Style Panel
+    
+    private var voiceStylePanel: some View {
+        VStack(spacing: 16) {
+            Text("🎨 Voice Style")
+                .font(.title2)
+                .bold()
+            
+            // マイクボタン
+            Button {
+                voiceStyle.toggleListening()
+            } label: {
+                VStack(spacing: 8) {
+                    Image(systemName: voiceStyle.isListening ? "mic.fill" : "mic.slash")
+                        .font(.system(size: 40))
+                        .foregroundStyle(voiceStyle.isListening ? .red : .secondary)
+                        .symbolEffect(.pulse, isActive: voiceStyle.isListening)
+                    Text(voiceStyle.isListening ? "聞いてるよ..." : "タップで音声認識")
+                        .font(.caption)
+                }
+            }
+            .buttonStyle(.plain)
+            
+            // 認識テキスト表示
+            if !voiceStyle.recognizedText.isEmpty {
+                Text(voiceStyle.recognizedText)
+                    .font(.body)
+                    .foregroundColor(.primary)
+                    .lineLimit(2)
+                    .frame(maxWidth: 250)
+                    .padding(8)
+                    .background(.ultraThinMaterial)
+                    .cornerRadius(8)
+            }
+            
+            // 現在のスタイル
+            if voiceStyle.currentStyle != "none" {
+                HStack {
+                    Text("現在: \(voiceStyle.lastCommand)")
+                        .font(.subheadline)
+                    Button("✕") {
+                        voiceStyle.isStreamDiffusionEnabled = false
+                        voiceStyle.currentStyle = "none"
+                    }
+                    .font(.caption)
+                }
+            }
+            
+            Divider()
+            
+            // スタイルプリセットボタン（手動選択も可能）
+            Text("プリセット")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                ForEach(VoiceStyleController.styleMap, id: \.preset) { style in
+                    Button(style.display) {
+                        voiceStyle.currentStyle = style.preset
+                        voiceStyle.lastCommand = style.display
+                        voiceStyle.isStreamDiffusionEnabled = true
+                        // API呼び出しはVoiceStyleController内部で
+                        applyStyleManually(style.preset)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(voiceStyle.currentStyle == style.preset ? .blue : .secondary)
+                    .font(.caption)
+                }
+            }
+            
+            // エラー表示
+            if let error = voiceStyle.errorMessage {
+                Text(error)
+                    .font(.caption2)
+                    .foregroundColor(.red)
+                    .lineLimit(2)
+            }
+            
+            Spacer()
+            
+            // StreamDiffusion接続先設定
+            Text("SD Server: \(voiceStyle.streamDiffusionHost):\(voiceStyle.streamDiffusionPort)")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+        }
+        .frame(width: 280)
+        .padding()
+        .background(.ultraThinMaterial)
+        .cornerRadius(16)
+    }
+    
+    private func applyStyleManually(_ preset: String) {
+        let url = voiceStyle.streamDiffusionBaseURL.appendingPathComponent("style")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: ["style": preset])
+        URLSession.shared.dataTask(with: request) { _, _, _ in }.resume()
     }
 }
