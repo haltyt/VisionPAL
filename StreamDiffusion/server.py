@@ -210,6 +210,14 @@ def set_style():
     
     data = request.get_json(force=True)
     
+    # プリセット名対応（VoiceStyleControllerから {"style": "ghibli"} 等）
+    if "style" in data:
+        preset_name = data["style"].lower()
+        if preset_name in STYLE_PRESETS:
+            current_prompt = STYLE_PRESETS[preset_name]
+        else:
+            return jsonify({"error": "Unknown style: {}".format(preset_name), "available": list(STYLE_PRESETS.keys())}), 400
+    
     if "prompt" in data:
         current_prompt = data["prompt"]
     if "strength" in data:

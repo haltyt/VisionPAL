@@ -1,7 +1,11 @@
-torch==2.1.0
-torchvision==0.16.0
-xformers
-streamdiffusion[tensorrt]
-flask
-pillow
-numpy
+# Vision PAL - StreamDiffusion Server
+# Python 3.10+ / CUDA 11.8+
+
+flask>=3.0
+pillow>=10.0
+numpy>=1.24
+opencv-python>=4.8
+
+# GPU mode (optional - install separately)
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+# pip install streamdiffusion
