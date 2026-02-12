@@ -32,6 +32,25 @@ current_prompt = "anime style, studio ghibli, warm colors, hand-painted"
 current_strength = 0.65
 device = "cuda"
 
+# FPS tracking
+fps_lock = threading.Lock()
+fps_counter = 0
+fps_value = 0.0
+fps_last_time = time.time()
+transform_ms = 0.0
+
+def update_fps():
+    """FPSカウンター更新"""
+    global fps_counter, fps_value, fps_last_time
+    with fps_lock:
+        fps_counter += 1
+        now = time.time()
+        elapsed = now - fps_last_time
+        if elapsed >= 1.0:
+            fps_value = fps_counter / elapsed
+            fps_counter = 0
+            fps_last_time = now
+
 app = Flask(__name__)
 
 # === StreamDiffusion Pipeline ===
@@ -286,17 +305,31 @@ def transform():
     return response
 
 
+@app.route("/fps")
+def get_fps():
+    """FPS情報取得"""
+    return jsonify({
+        "fps": round(fps_value, 1),
+        "transform_ms": round(transform_ms, 1),
+        "pipeline": "streamdiffusion" if stream_pipe else "opencv_toon",
+    })
+
+
 @app.route("/stream")
 def stream():
     """変換済みMJPEGストリーム"""
     def generate():
+        global transform_ms
         while True:
             frame = mjpeg_reader.get_frame()
             if frame is None:
                 time.sleep(0.1)
                 continue
             
+            t0 = time.time()
             result = transform_frame(frame)
+            transform_ms = (time.time() - t0) * 1000
+            update_fps()
             
             buf = io.BytesIO()
             result.save(buf, format="JPEG", quality=80)
@@ -331,9 +364,12 @@ input[type=text] { width:400px; padding:8px; font-size:16px; border-radius:8px; 
 button { padding:8px 20px; font-size:16px; border-radius:8px; border:none; background:#6c5ce7; color:#fff; cursor:pointer; margin:5px; }
 button:hover { background:#a29bfe; }
 #status { color:#aaa; margin-top:10px; }
+#fps { position:fixed; top:10px; right:10px; background:rgba(0,0,0,0.8); padding:8px 16px; border-radius:8px; font-family:monospace; font-size:18px; z-index:100; }
+#fps .num { color:#0f0; font-size:24px; font-weight:bold; }
 </style>
 </head>
 <body>
+<div id="fps"><span class="num">--</span> FPS | <span id="ms">--</span>ms</div>
 <h1>Vision PAL - AI World Filter</h1>
 
 <div class="controls">
@@ -380,6 +416,16 @@ fetch('/health').then(r => r.json()).then(d => {
     document.getElementById('status').textContent = 
         'Pipeline: ' + d.pipeline + ' | Style: ' + d.prompt;
 });
+
+// FPS counter (poll every second)
+setInterval(async () => {
+    try {
+        const res = await fetch('/fps');
+        const d = await res.json();
+        document.querySelector('#fps .num').textContent = d.fps.toFixed(1);
+        document.getElementById('ms').textContent = d.transform_ms.toFixed(0);
+    } catch(e) {}
+}, 1000);
 </script>
 </body>
 </html>"""
