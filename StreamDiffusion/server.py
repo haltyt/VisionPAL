@@ -36,41 +36,58 @@ app = Flask(__name__)
 
 # === StreamDiffusion Pipeline ===
 
-def init_pipeline(model_id="KBlueLeaf/kohaku-v2.1", t_index_list=[32]):
+def init_pipeline(model_id="KBlueLeaf/kohaku-v2.1", t_index_list=[32, 45]):
     """StreamDiffusionパイプライン初期化"""
     global stream_pipe
     
     try:
+        import torch
+        from diffusers import StableDiffusionPipeline, AutoencoderTiny
         from streamdiffusion import StreamDiffusion
         from streamdiffusion.image_utils import postprocess_image
         
         print("[INIT] Loading model: {}...".format(model_id))
         
-        stream_pipe = StreamDiffusion(
-            model_id_or_path=model_id,
+        # Step 1: diffusersでパイプライン読み込み
+        pipe = StableDiffusionPipeline.from_pretrained(model_id).to(
+            device=torch.device("cuda"),
+            dtype=torch.float16,
+        )
+        
+        # Step 2: StreamDiffusionでラップ
+        stream = StreamDiffusion(
+            pipe,
             t_index_list=t_index_list,
             torch_dtype=torch.float16,
-            width=512,
-            height=512,
-            do_add_noise=True,
-            frame_buffer_size=1,
-            use_denoising_batch=True,
         )
         
-        # Prompt設定
-        stream_pipe.prepare(
-            prompt=current_prompt,
-            num_inference_steps=50,
-            guidance_scale=1.2,
+        # Step 3: LCM-LoRA統合（高速化）
+        stream.load_lcm_lora()
+        stream.fuse_lora()
+        
+        # Step 4: Tiny VAE（さらに高速化）
+        stream.vae = AutoencoderTiny.from_pretrained("madebyollin/taesd").to(
+            device=pipe.device, dtype=pipe.dtype
         )
         
-        # Warmup
+        # Step 5: xformers高速化
+        try:
+            pipe.enable_xformers_memory_efficient_attention()
+            print("[INIT] xformers enabled")
+        except Exception:
+            print("[INIT] xformers not available, continuing without it")
+        
+        # Step 6: Prompt設定
+        stream.prepare(current_prompt)
+        
+        # Step 7: Warmup（t_index_list長 x frame_buffer_size 以上）
         print("[INIT] Warming up...")
         dummy = Image.new("RGB", (512, 512), (128, 128, 128))
-        for _ in range(5):
-            stream_pipe(image=dummy)
+        for _ in range(len(t_index_list) + 1):
+            stream(dummy)
         
-        print("[INIT] Pipeline ready!")
+        stream_pipe = stream
+        print("[INIT] Pipeline ready! (GPU: {})".format(torch.cuda.get_device_name(0)))
         return True
         
     except ImportError as e:
@@ -87,10 +104,12 @@ def transform_frame(pil_image):
     img = pil_image.resize((512, 512), Image.LANCZOS)
     
     if stream_pipe is not None:
-        # StreamDiffusion変換
-        result = stream_pipe(image=img)
+        import torch
+        from streamdiffusion.image_utils import postprocess_image
+        
+        # StreamDiffusion: stream(pil_image) → Tensor → PIL
+        result = stream_pipe(img)
         if isinstance(result, torch.Tensor):
-            from streamdiffusion.image_utils import postprocess_image
             result = postprocess_image(result, output_type="pil")[0]
         return result
     else:
@@ -226,11 +245,7 @@ def set_style():
     # パイプラインのprompt更新
     if stream_pipe is not None:
         try:
-            stream_pipe.prepare(
-                prompt=current_prompt,
-                num_inference_steps=50,
-                guidance_scale=1.2,
-            )
+            stream_pipe.prepare(current_prompt)
         except Exception as e:
             return jsonify({"error": str(e)}), 500
     
@@ -400,8 +415,8 @@ if __name__ == "__main__":
     # StreamDiffusionパイプライン初期化
     if not args.no_gpu:
         try:
-            import torch
-            init_pipeline(args.model)
+            if not init_pipeline(args.model):
+                print("[WARN] Falling back to OpenCV toon filter")
         except Exception as e:
             print("[WARN] GPU init failed: {}".format(e))
             print("[WARN] Falling back to OpenCV toon filter")
