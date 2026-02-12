@@ -64,15 +64,15 @@ def init_pipeline(model_id="KBlueLeaf/kohaku-v2.1", t_index_list=[32, 45]):
         from diffusers import StableDiffusionPipeline, AutoencoderTiny
         from streamdiffusion import StreamDiffusion
         from streamdiffusion.image_utils import postprocess_image
-        
+
         print("[INIT] Loading model: {}...".format(model_id))
-        
+
         # Step 1: diffusersでパイプライン読み込み
         pipe = StableDiffusionPipeline.from_pretrained(model_id).to(
-            device=torch.device("cuda"),
+            device=torch.device(device),
             dtype=torch.float16,
         )
-        
+
         # Step 2: StreamDiffusionでラップ
         stream = StreamDiffusion(
             pipe,
@@ -112,6 +112,10 @@ def init_pipeline(model_id="KBlueLeaf/kohaku-v2.1", t_index_list=[32, 45]):
     except ImportError as e:
         print("[WARN] StreamDiffusion not installed: {}".format(e))
         print("[WARN] Running in DEMO mode (passthrough + OpenCV toon filter)")
+        return False
+    except Exception as e:
+        print("[WARN] GPU init failed: {}".format(e))
+        print("[WARN] Falling back to OpenCV toon filter")
         return False
 
 

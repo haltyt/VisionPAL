@@ -24,12 +24,15 @@ conda activate visionpal
 pip3 install torch==2.1.0 torchvision==0.16.0 xformers --index-url https://download.pytorch.org/whl/cu118
 
 # 3. Install StreamDiffusion
-pip install git+https://github.com/cumulo-autumn/StreamDiffusion.git@main#egg=streamdiffusion[tensorrt]
+pip install "streamdiffusion[tensorrt] @ git+https://github.com/cumulo-autumn/StreamDiffusion.git@main"
 
-# 4. Install server dependencies
-pip install flask pillow numpy
+# 4. Fix version compatibility
+pip install numpy==1.26.4 huggingface_hub==0.25.2 transformers==4.36.0
 
-# 5. (Optional) TensorRT acceleration
+# 5. Install server dependencies
+pip install flask opencv-python==4.10.0.84
+
+# 6. (Optional) TensorRT acceleration
 python -m streamdiffusion.tools.install-tensorrt
 ```
 
