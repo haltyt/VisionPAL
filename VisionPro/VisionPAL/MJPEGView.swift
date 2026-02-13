@@ -59,9 +59,10 @@ class MJPEGLoader: NSObject, ObservableObject {
         isConnecting = true
         
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 30
+        config.timeoutIntervalForRequest = 60
         config.timeoutIntervalForResource = 3600  // 1時間（ストリームなので長めに）
         config.requestCachePolicy = .reloadIgnoringLocalCacheData
+        config.waitsForConnectivity = true
         
         // delegateQueue=nil → background
         session = URLSession(configuration: config, delegate: self, delegateQueue: nil)
