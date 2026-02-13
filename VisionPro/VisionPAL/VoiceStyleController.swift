@@ -15,7 +15,7 @@ class VoiceStyleController: ObservableObject {
     
     // MARK: - Configuration
     /// StreamDiffusion APIサーバーURL（ハルトのPC）
-    var streamDiffusionHost = "192.168.3.5"  // 後で変更可能
+    var streamDiffusionHost = "192.168.3.7"  // ハルトのPC (RTX 2080Ti)
     var streamDiffusionPort = 8555
     
     var streamDiffusionBaseURL: URL {
