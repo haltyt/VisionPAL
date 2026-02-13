@@ -19,22 +19,23 @@ class RobotController: ObservableObject {
     private var mqtt: CocoaMQTT?
     private let moveTopic = "vision_pal/move"
     private let statusTopic = "vision_pal/status"
-    
+
     // Head tracking thresholds
     let yawDeadZone: Float = 0.1    // ±0.1 rad (~6°) = forward
     let yawTurnZone: Float = 0.3    // ±0.3 rad (~17°) = turn
     let pitchStopZone: Float = -0.3 // 下を向いたら停止
-    
+
     init() {
         setupMQTT()
     }
-    
+
     private func setupMQTT() {
         let clientID = "VisionPAL-\(ProcessInfo.processInfo.processIdentifier)"
         mqtt = CocoaMQTT(clientID: clientID, host: mqttHost, port: mqttPort)
         mqtt?.keepAlive = 30
         mqtt?.autoReconnect = true
-        
+        mqtt?.enableSSL = false  // WebSocket を使わない
+
         mqtt?.didConnectAck = { [weak self] _, ack in
             if ack == .accept {
                 DispatchQueue.main.async {
@@ -44,18 +45,18 @@ class RobotController: ObservableObject {
                 print("[MQTT] Connected!")
             }
         }
-        
+
         mqtt?.didDisconnect = { [weak self] _, _ in
             DispatchQueue.main.async {
                 self?.isConnected = false
             }
             print("[MQTT] Disconnected")
         }
-        
+
         mqtt?.didReceiveMessage = { _, message, _ in
             print("[MQTT] Received: \(message.topic) = \(message.string ?? "")")
         }
-        
+
         _ = mqtt?.connect()
     }
     

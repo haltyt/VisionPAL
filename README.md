@@ -138,7 +138,57 @@ python server.py --jetbot http://192.168.3.8:8554/raw
 
 ## Tech Stack
 
-- **Vision Pro**: Swift, RealityKit, ARKit, CocoaMQTT, Speech Framework
+- **Vision Pro**: Swift, SwiftUI, RealityKit, ARKit, CocoaMQTT 2.0.9, Speech Framework
 - **PC**: Python, StreamDiffusion, PyTorch, CUDA, Flask
 - **JetBot**: Python 3.6, OpenCV, GStreamer, Adafruit MotorHAT, paho-mqtt
 - **Jetson Host**: Mosquitto, OpenClaw (Docker)
+
+## Project Structure
+
+```
+VisionPAL/
+├── README.md                     # This file - System architecture
+├── .claude/
+│   └── CLAUDE.md                 # Claude Code project guide
+├── JetBot/                       # JetBot Python scripts
+│   ├── mqtt_robot.py             # MQTT robot control
+│   └── mjpeg_server.py           # Camera streaming
+├── StreamDiffusion/              # PC AI server
+│   └── server.py                 # StreamDiffusion API
+└── VisionPro/                    # Vision Pro app ⭐
+    ├── README.md                 # Build instructions
+    ├── VisionPAL.xcodeproj/      # Xcode project
+    └── VisionPAL/                # Swift source code
+        ├── VisionPALApp.swift        # App entry point
+        ├── ContentView.swift         # Main UI
+        ├── MJPEGView.swift           # MJPEG stream viewer
+        ├── RobotController.swift     # MQTT/Robot control
+        ├── VoiceStyleController.swift # Voice recognition
+        ├── ImmersiveControlView.swift # Immersive Space UI
+        ├── Info.plist                # Permissions
+        └── Assets.xcassets/          # Assets
+```
+
+## Building Vision Pro App
+
+For detailed build instructions, see [VisionPro/README.md](VisionPro/README.md).
+
+### Quick Start
+
+```bash
+cd VisionPro
+open VisionPAL.xcodeproj
+# In Xcode: ⌘ + B to build
+```
+
+### Requirements
+
+- **macOS 14 (Sonoma) or later**
+- **Xcode 15.0 or later** (with visionOS SDK)
+- **Apple Developer Account** (for device deployment)
+
+### Dependencies
+
+The following packages are automatically resolved by Xcode:
+- **CocoaMQTT 2.0.9**: MQTT client library
+- **Starscream**: WebSocket (CocoaMQTT dependency)

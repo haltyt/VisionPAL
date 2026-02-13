@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 /// MJPEGストリームをSwiftUIで表示するビュー
 struct MJPEGView: View {
@@ -70,7 +71,7 @@ class MJPEGLoader: NSObject, ObservableObject {
     func stop() {
         dataTask?.cancel()
         dataTask = nil
-        session?.invalidateAndCancelTasks()
+        session?.invalidateAndCancel()
         session = nil
         buffer.removeAll()
         isConnecting = false
