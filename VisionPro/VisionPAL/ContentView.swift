@@ -34,7 +34,8 @@ struct ContentView: View {
                 }
                 
                 MJPEGView(url: currentCameraURL ?? robot.cameraURL)
-                    .frame(width: 640, height: 480)
+                    .frame(width: 800, height: 450)  // 16:9
+                    .clipped()
                     .cornerRadius(16)
                     .shadow(radius: 10)
                     .overlay(

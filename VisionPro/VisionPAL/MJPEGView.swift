@@ -11,7 +11,7 @@ struct MJPEGView: View {
             if let image = loader.currentFrame {
                 Image(uiImage: image)
                     .resizable()
-                    .aspectRatio(contentMode: .fit)
+                    .aspectRatio(contentMode: .fill)
             } else {
                 ZStack {
                     Color.black
