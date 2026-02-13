@@ -6,6 +6,13 @@ struct ContentView: View {
     @Environment(\.openImmersiveSpace) var openImmersiveSpace
     @Environment(\.dismissImmersiveSpace) var dismissImmersiveSpace
     @State private var isImmersive = false
+    @State private var currentCameraURL: URL?
+    
+    private var desiredCameraURL: URL {
+        voiceStyle.isStreamDiffusionEnabled
+            ? voiceStyle.transformedStreamURL
+            : robot.cameraURL
+    }
     
     var body: some View {
         HStack(spacing: 30) {
@@ -26,12 +33,7 @@ struct ContentView: View {
                         .font(.caption)
                 }
                 
-                // Camera Feed — SD変換済みかJetBot直接か切替
-                let cameraURL = voiceStyle.isStreamDiffusionEnabled
-                    ? voiceStyle.transformedStreamURL
-                    : robot.cameraURL
-                
-                MJPEGView(url: cameraURL)
+                MJPEGView(url: currentCameraURL ?? robot.cameraURL)
                     .frame(width: 640, height: 480)
                     .cornerRadius(16)
                     .shadow(radius: 10)
@@ -72,6 +74,14 @@ struct ContentView: View {
         .padding(40)
         .onAppear {
             voiceStyle.requestPermissions()
+            currentCameraURL = desiredCameraURL
+        }
+        .onChange(of: voiceStyle.isStreamDiffusionEnabled) { _, _ in
+            let newURL = desiredCameraURL
+            if currentCameraURL != newURL {
+                print("[CAM] Switching to: \(newURL.absoluteString)")
+                currentCameraURL = newURL
+            }
         }
     }
     
