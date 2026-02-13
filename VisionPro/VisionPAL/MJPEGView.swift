@@ -57,6 +57,7 @@ class MJPEGLoader: NSObject, ObservableObject {
     func start(url: URL) {
         stop()
         isConnecting = true
+        print("[MJPEG] Connecting to: \(url.absoluteString)")
         
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 60
@@ -81,6 +82,11 @@ class MJPEGLoader: NSObject, ObservableObject {
 }
 
 extension MJPEGLoader: URLSessionDataDelegate {
+    nonisolated func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse, completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        print("[MJPEG] Response: \(response.mimeType ?? "unknown") status: \((response as? HTTPURLResponse)?.statusCode ?? -1)")
+        completionHandler(.allow)
+    }
+    
     nonisolated func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
         // URLSession delegate callback — off main actor
         let jpegStart = Data([0xFF, 0xD8])
