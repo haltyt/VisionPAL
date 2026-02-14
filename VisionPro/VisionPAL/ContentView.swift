@@ -73,6 +73,7 @@ struct ContentView: View {
             voiceStylePanel
         }
         .padding(40)
+        .preferredSurroundingsEffect(.dark)
         .onAppear {
             voiceStyle.requestPermissions()
             currentCameraURL = desiredCameraURL
