@@ -53,17 +53,17 @@ struct CurvedScreenView: View {
             let u = Float(col) / Float(cols)
             let angle = -halfArc + arc * u  // 左から右へ
             
-            // 円筒の外面（ユーザーに向かって凸、ウィンドウ内表示用）
+            // 円筒の外面（奥に凹む = 包み込む感じ）
             let x = radius * sin(angle)
-            let z = radius * cos(angle) - radius  // 手前に膨らむ
+            let z = -radius * cos(angle) + radius  // 奥に凹む
             
             // 上と下の頂点
             positions.append(SIMD3<Float>(x, halfHeight, z))
             positions.append(SIMD3<Float>(x, -halfHeight, z))
             
-            // テクスチャ座標（左右反転なし）
-            texCoords.append(SIMD2<Float>(u, 0))  // 上
-            texCoords.append(SIMD2<Float>(u, 1))  // 下
+            // テクスチャ座標（上下反転修正）
+            texCoords.append(SIMD2<Float>(u, 1))  // 上
+            texCoords.append(SIMD2<Float>(u, 0))  // 下
         }
         
         // 三角形インデックス（内面 = 反時計回り）
@@ -83,8 +83,8 @@ struct CurvedScreenView: View {
         for col in 0...cols {
             let u = Float(col) / Float(cols)
             let angle = -halfArc + arc * u
-            let nx = sin(angle)
-            let nz = -(cos(angle))
+            let nx = -sin(angle)
+            let nz = cos(angle)
             let normal = SIMD3<Float>(nx, 0, nz)
             normals.append(normal)  // 上
             normals.append(normal)  // 下
