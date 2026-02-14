@@ -11,7 +11,7 @@ struct CurvedScreenView: View {
     // スクリーン設定
     var arcDegrees: Float = 140      // 視野角（度）
     var radius: Float = 0.4          // 円筒の半径（m）
-    var height: Float = 0.25         // スクリーンの高さ（m）
+    var height: Float = 0.42         // スクリーンの高さ（m）16:9比率
     var segments: Int = 64           // メッシュの分割数
     
     var body: some View {
