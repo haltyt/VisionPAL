@@ -16,5 +16,6 @@ struct VisionPALApp: App {
             ImmersiveControlView()
                 .environmentObject(robotController)
         }
+        .immersionStyle(selection: .constant(.progressive), in: .progressive)
     }
 }
