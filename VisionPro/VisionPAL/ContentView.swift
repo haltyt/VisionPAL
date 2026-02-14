@@ -6,6 +6,7 @@ struct ContentView: View {
     @Environment(\.openImmersiveSpace) var openImmersiveSpace
     @Environment(\.dismissImmersiveSpace) var dismissImmersiveSpace
     @State private var isImmersive = false
+    @State private var isCurvedMode = false
     @State private var currentCameraURL: URL?
     
     private var desiredCameraURL: URL {
@@ -33,27 +34,37 @@ struct ContentView: View {
                         .font(.caption)
                 }
                 
-                MJPEGView(url: currentCameraURL ?? robot.cameraURL)
-                    .frame(width: 800, height: 450)  // 16:9
-                    .clipped()
-                    .cornerRadius(16)
-                    .shadow(radius: 10)
-                    .overlay(
-                        // スタイル表示バッジ
-                        Group {
-                            if voiceStyle.isStreamDiffusionEnabled {
-                                Text(voiceStyle.lastCommand)
-                                    .font(.caption)
-                                    .padding(6)
-                                    .background(.ultraThinMaterial)
-                                    .cornerRadius(8)
-                            }
-                        },
-                        alignment: .topTrailing
-                    )
+                if isCurvedMode {
+                    CurvedScreenView(url: currentCameraURL ?? robot.cameraURL)
+                        .frame(width: 800, height: 450)
+                        .cornerRadius(16)
+                } else {
+                    MJPEGView(url: currentCameraURL ?? robot.cameraURL)
+                        .frame(width: 800, height: 450)  // 16:9
+                        .clipped()
+                        .cornerRadius(16)
+                        .shadow(radius: 10)
+                        .overlay(
+                            // スタイル表示バッジ
+                            Group {
+                                if voiceStyle.isStreamDiffusionEnabled {
+                                    Text(voiceStyle.lastCommand)
+                                        .font(.caption)
+                                        .padding(6)
+                                        .background(.ultraThinMaterial)
+                                        .cornerRadius(8)
+                                }
+                            },
+                            alignment: .topTrailing
+                        )
+                }
                 
                 // Manual Controls
                 controlPad
+                
+                // Curved Screen Toggle
+                Toggle("🌀 Curved Screen", isOn: $isCurvedMode)
+                    .toggleStyle(.button)
                 
                 // Immersive Mode Toggle
                 Toggle("🎯 Head Tracking Mode", isOn: $isImmersive)
