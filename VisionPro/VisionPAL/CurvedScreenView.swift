@@ -177,15 +177,24 @@ class CurvedMJPEGLoader: NSObject, URLSessionDataDelegate {
     private func extractFrames() {
         while true {
             guard let range = findJPEGRange() else { break }
+            guard range.lowerBound >= 0 && range.upperBound <= buffer.count else {
+                buffer.removeAll()
+                break
+            }
             let jpegData = Data(buffer[range])
-            buffer = Data(buffer[range.upperBound...])
+            
+            if range.upperBound < buffer.count {
+                buffer = Data(buffer[range.upperBound...])
+            } else {
+                buffer.removeAll()
+            }
             
             // 最新フレームだけ処理（古いのはスキップ）
             if findJPEGStart() != nil { continue }
             
-            guard let provider = CGDataProvider(data: jpegData as CFData),
+            guard let dataProvider = CGDataProvider(data: jpegData as CFData),
                   let cgImage = CGImage(
-                    jpegDataProviderSource: provider,
+                    jpegDataProviderSource: dataProvider,
                     decode: nil,
                     shouldInterpolate: true,
                     intent: .defaultIntent
@@ -196,9 +205,9 @@ class CurvedMJPEGLoader: NSObject, URLSessionDataDelegate {
     }
     
     private func findJPEGStart() -> Int? {
-        let marker: [UInt8] = [0xFF, 0xD8]
+        guard buffer.count >= 2 else { return nil }
         for i in 0..<(buffer.count - 1) {
-            if buffer[i] == marker[0] && buffer[i + 1] == marker[1] {
+            if buffer[i] == 0xFF && buffer[i + 1] == 0xD8 {
                 return i
             }
         }
@@ -206,9 +215,9 @@ class CurvedMJPEGLoader: NSObject, URLSessionDataDelegate {
     }
     
     private func findLastJPEGStart() -> Int? {
-        let marker: [UInt8] = [0xFF, 0xD8]
+        guard buffer.count >= 2 else { return nil }
         for i in stride(from: buffer.count - 2, through: 0, by: -1) {
-            if buffer[i] == marker[0] && buffer[i + 1] == marker[1] {
+            if buffer[i] == 0xFF && buffer[i + 1] == 0xD8 {
                 return i
             }
         }
@@ -217,9 +226,9 @@ class CurvedMJPEGLoader: NSObject, URLSessionDataDelegate {
     
     private func findJPEGRange() -> Range<Int>? {
         guard let start = findJPEGStart() else { return nil }
-        let endMarker: [UInt8] = [0xFF, 0xD9]
+        guard start + 2 < buffer.count else { return nil }
         for i in (start + 2)..<(buffer.count - 1) {
-            if buffer[i] == endMarker[0] && buffer[i + 1] == endMarker[1] {
+            if buffer[i] == 0xFF && buffer[i + 1] == 0xD9 {
                 return start..<(i + 2)
             }
         }
