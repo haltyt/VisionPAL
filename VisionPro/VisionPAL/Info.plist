@@ -28,6 +28,10 @@
 	<string>パルのスタイルを声で変更するために音声認識を使います</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>音声コマンドを聞くためにマイクを使います</string>
+	<key>NSWorldSensingUsageDescription</key>
+	<string>頭の向きでJetBotを操縦するためにワールドセンシングを使います</string>
+	<key>NSHandsTrackingUsageDescription</key>
+	<string>ジェスチャー操作のためにハンドトラッキングを使います</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>JetBotとStreamDiffusionサーバーに接続します</string>
 	<key>NSBonjourServices</key>
