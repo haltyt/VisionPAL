@@ -10,6 +10,7 @@
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_mqtt._tcp</string>
+		<string>_http._tcp</string>
 	</array>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>パルのスタイルを声で変更するために音声認識を使います</string>
