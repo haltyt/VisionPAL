@@ -10,15 +10,15 @@ struct CurvedScreenView: View {
     
     // スクリーン設定
     var arcDegrees: Float = 140      // 視野角（度）
-    var radius: Float = 3.0          // 円筒の半径（m）
-    var height: Float = 2.0          // スクリーンの高さ（m）
+    var radius: Float = 0.4          // 円筒の半径（m）
+    var height: Float = 0.25         // スクリーンの高さ（m）
     var segments: Int = 64           // メッシュの分割数
     
     var body: some View {
         RealityView { content in
             let entity = createCurvedScreen()
-            // ユーザーの正面、少し前方に配置
-            entity.position = SIMD3<Float>(0, 1.2, 0)  // 目の高さ
+            // ウィンドウ内の中央に配置
+            entity.position = SIMD3<Float>(0, 0, 0)
             content.add(entity)
             screenEntity = entity
             
