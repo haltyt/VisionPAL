@@ -25,6 +25,12 @@ try:
 except ImportError:
     from BaseHTTPServer import HTTPServer
     from BaseHTTPServer import BaseHTTPRequestHandler
+from socketserver import ThreadingMixIn
+
+
+class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+    """複数クライアント同時接続対応"""
+    daemon_threads = True
 
 PORT = 8554
 FPS = 15
@@ -123,7 +129,7 @@ def camera_thread(cap):
 
 class MJPEGHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path == '/stream':
+        if self.path in ('/stream', '/raw'):
             self.send_response(200)
             self.send_header('Content-type', 'multipart/x-mixed-replace; boundary=--jpgboundary')
             self.end_headers()
@@ -251,7 +257,7 @@ def main():
     print("[HTTP] View at http://0.0.0.0:{}".format(port))
     print("[HTTP] Endpoints: /stream /snap /status")
 
-    server = HTTPServer(('0.0.0.0', port), MJPEGHandler)
+    server = ThreadedHTTPServer(('0.0.0.0', port), MJPEGHandler)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
