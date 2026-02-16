@@ -21,22 +21,40 @@ JetBot Camera →MJPEG→ StreamDiffusion Server ←MQTT← Cognition Engine
 
 ### 必要環境
 - Python 3.10+
-- NVIDIA GPU (RTX 2060+) + CUDA 11.8+（GPU変換モード）
-- GPUなしでもOpenCVトゥーンフィルタで動作
+- NVIDIA GPU (GTX 2080 Ti以上推奨) + CUDA 12.1+
+- GPUなしでもOpenCVトゥーンフィルタで動作（デモ用）
 
 ### インストール
 
 ```bash
-pip install -r requirements.txt
+python -m venv .venv
+source .venv/bin/activate
 
-# GPU モード（オプション）
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+# PyTorch + CUDA
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+
+# StreamDiffusion + TensorRT（推奨、大幅に高速化）
+pip install streamdiffusion[tensorrt]
+python -m streamdiffusion.tools.install-tensorrt
+
+# その他依存
+pip install -r requirements.txt
+```
+
+> 💡 condaは不要。venvで十分動く。
+
+### TensorRTなしで試す場合
+
+```bash
 pip install streamdiffusion
+# TensorRTなしでも動作するが、FPSは低下（~10fps → ~3-5fps）
 ```
 
 ## 起動
 
 ```bash
+source .venv/bin/activate
+
 # 通常起動（GPU + MQTT自動接続）
 python server.py
 
