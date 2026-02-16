@@ -1,194 +1,214 @@
-# Vision PAL 🐾👓
+# Vision PAL 🐾👓 — "Umwelt"
 
-**OpenClaw Eye — AIロボットは人間の夢を見るか？**
+**AIの環世界をARで可視化するアートインスタレーション**
 
-Vision Pro + JetBot + StreamDiffusion = パルの目で見る世界をリアルタイムAI画風変換
+パル（AI）の認知世界を覗く。物体認識、感情、記憶が混ざり合い、StreamDiffusionでリアルタイムに映像化される。人間とは異なる知覚、確率的な世界認識、記憶から染み出す過去の風景。
+
+> Vision Pro + JetBot + Cognition Engine + StreamDiffusion
 
 ## Architecture
 
 ```
-┌───────────────────────────────────────────────────────────────────┐
-│                        Local Network                              │
-│                                                                   │
-│  Vision Pro (Swift/RealityKit)                                    │
-│  ┌──────────────────────────┐                                     │
-│  │  🎯 HeadTracking         │──MQTT──┐                            │
-│  │  → yaw/pitch → direction │        │                            │
-│  │                          │        │                            │
-│  │  🎤 VoiceStyleController │        │                            │
-│  │  → SFSpeechRecognizer    │──HTTP──┼──────────────┐             │
-│  │  →「ジブリにして」        │        │              │             │
-│  │                          │        │              ▼             │
-│  │  📺 MJPEGView            │    ┌───┴──────────────────────┐     │
-│  │  → Camera / AI Feed      │    │  PC (RTX 2080Ti)         │     │
-│  └──────────┬───────────────┘    │  ┌────────────────────┐  │     │
-│             │                    │  │  StreamDiffusion    │  │     │
-│             │                    │  │  server.py :8555    │  │     │
-│             │                    │  │                     │  │     │
-│             │◄──HTTP (SD)────────│  │  MJPEG In → AI     │  │     │
-│             │                    │  │  Transform → Out    │  │     │
-│             │                    │  │  10 FPS / 512x512   │  │     │
-│             │                    │  └────────┬───────────┘  │     │
-│             │                    │           │              │     │
-│             │                    │  8 Presets: Ghibli /     │     │
-│             │                    │  Cyberpunk / Watercolor / │     │
-│             │                    │  Sketch / Oil / Pixel /  │     │
-│             │                    │  Ukiyo-e / Pastel        │     │
-│             │                    └───────────┬──────────────┘     │
-│             │                                │                    │
-│             │      ┌─────────────────────────┘                    │
-│             │      │ HTTP (MJPEG)                                 │
-│             │      ▼                                              │
-│  ┌──────────┴──────────────┐     ┌─────────────────────────┐     │
-│  │  Jetson Nano (Host)     │     │  JetBot                  │     │
-│  │  ┌───────────────────┐  │     │  ┌────────────────────┐  │     │
-│  │  │ Mosquitto MQTT    │  │     │  │ mqtt_robot.py      │  │     │
-│  │  │ :1883             │──┼──┐  │  │ → Motor Control    │  │     │
-│  │  └───────────────────┘  │  │  │  │ (Adafruit MotorHAT)│  │     │
-│  │  ┌───────────────────┐  │  └──┼─→│                    │  │     │
-│  │  │ OpenClaw (Docker) │  │     │  └────────────────────┘  │     │
-│  │  │ パルの脳 🧠       │  │     │  ┌────────────────────┐  │     │
-│  │  └───────────────────┘  │     │  │ mjpeg_server.py    │  │     │
-│  └─────────────────────────┘     │  │ :8554 CSI Camera   │──┼──→  │
-│    192.168.3.5                   │  │ 640x480 @15fps     │  │     │
-│                                  │  └────────────────────┘  │     │
-│                                  │  192.168.3.8             │     │
-│                                  └─────────────────────────┘     │
-└───────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                       Local Network                           │
+│                                                               │
+│  ┌─────────────────────────────┐                              │
+│  │      Vision Pro              │                              │
+│  │  📺 MJPEGView (リアル映像)   │◄── MJPEG :8554 ─────────┐   │
+│  │  🎨 UmweltView (認知映像)    │◄── MJPEG :8555 ──────┐  │   │
+│  │  ✨ AffectOverlay (感情AR)   │◄── MQTT ───────────┐  │  │   │
+│  │  🎯 HeadTracking → MQTT     │──┐                  │  │  │   │
+│  │  🎤 VoiceStyle → HTTP       │──┼──┐               │  │  │   │
+│  └─────────────────────────────┘  │  │               │  │  │   │
+│                                    │  │               │  │  │   │
+│  ┌─────────────────────────────┐  │  │               │  │  │   │
+│  │  Jetson Nano (Host)         │  │  │               │  │  │   │
+│  │  🧠 Cognition Engine ──────────┼──┼── MQTT pub ───┘  │  │   │
+│  │     perception → affect     │  │  │                   │  │   │
+│  │     → memory → prompt       │  │  │                   │  │   │
+│  │     → TTS monologue 🔊     │  │  │                   │  │   │
+│  │  📡 Mosquitto MQTT :1883 ◄──┘  │                   │  │   │
+│  └─────────────────────────────┘     │                   │  │   │
+│    192.168.3.5                       │                   │  │   │
+│                                      │                   │  │   │
+│  ┌─────────────────────────────┐     │                   │  │   │
+│  │  PC (GTX 2080 Ti)           │     │                   │  │   │
+│  │  🎨 StreamDiffusion :8555  │◄────┘                   │──┘   │
+│  │     MJPEG in + prompt in    │◄── MQTT sub ────────────┘     │
+│  │     → AI映像 out            │                              │
+│  └─────────────────────────────┘                              │
+│                                                               │
+│  ┌─────────────────────────────┐                              │
+│  │  JetBot                      │                              │
+│  │  📷 MJPEG Camera :8554      │─────────────────────────────┘
+│  │  🤖 MQTT Motor Control      │◄── MQTT sub
+│  │  💥 Collision Detection      │── MQTT pub
+│  └─────────────────────────────┘
+│    192.168.3.8
+└──────────────────────────────────────────────────────────────┘
 ```
 
-## Data Flow
+## Cognition Engine — パルの心
+
+2秒サイクルで動く認知ループ。パルの**リアルな内部状態**がそのまま映像とモノローグになる。
 
 ```
-JetBot Camera → MJPEG :8554 → PC StreamDiffusion → AI Transformed MJPEG :8555 → Vision Pro
-                                      ↑
-Vision Pro Voice →「サイバーパンク」→ POST /style → Prompt Update → Style Change
-Vision Pro Head → MQTT → Jetson Mosquitto → JetBot mqtt_robot.py → Motor Move
+知覚 → 感情 → 記憶 → プロンプト → 映像 + 声
 ```
 
-## Components
+| モジュール | 役割 |
+|-----------|------|
+| `perception.py` | MQTT経由で物体認識データ受信 |
+| `affect.py` | 8感情（好奇心/不安/喜び/驚き/退屈/怒り/悲しみ/平穏）を算出 |
+| `memory_recall.py` | OpenClaw APIでセマンティック記憶検索（Gemini embedding + BM25） |
+| `prompt_builder.py` | 感情→色彩・ムード + SD用プロンプト + 日本語モノローグ生成 |
+| `cognitive_loop.py` | 2秒サイクルのオーケストレーター |
+| `config.py` | MQTT・カメラ・DNN・感情マッピング設定 |
 
-### Vision Pro App (Swift + RealityKit)
-- **HeadTracking** → MQTT move commands (yaw/pitch → direction)
-- **MJPEGView** → Camera feed display (direct or AI-transformed)
-- **VoiceStyleController** → 日本語音声認識 → スタイル変更
-  - SFSpeechRecognizer (on-device, Japanese)
-  - 8 preset keywords: ジブリ / サイバーパンク / 水彩 / スケッチ / 油絵 / ピクセル / 浮世絵 / パステル
+### 感情 → ビジュアルスタイル
 
-### StreamDiffusion Server (PC with GPU)
-- `server.py` — Flask API on port 8555
-- JetBot MJPEG → img2img → AI-transformed MJPEG
-- SD-turbo 1-step, LCM-LoRA, Tiny VAE (taesd)
-- **~10 FPS** on RTX 2080Ti
-- Endpoints:
-  - `GET /stream` — Transformed MJPEG stream
-  - `POST /style` — Change style (`{"style": "ghibli"}` or `{"prompt": "..."}`)
-  - `GET /fps` — Real-time FPS & latency
-  - `GET /` — Web UI with preset buttons
-
-### JetBot (Python 3.6)
-- `mqtt_robot.py` — MQTT subscriber → Adafruit MotorHAT control
-- `mjpeg_server.py` — CSI camera (IMX219) → HTTP MJPEG stream on port 8554
-
-### Infrastructure
-- Mosquitto MQTT broker on Jetson host (192.168.3.5:1883)
-- OpenClaw container on Jetson (パルの脳)
-- All communication over local WiFi network
-
-## Setup
-
-```bash
-# 1. Start Mosquitto on Jetson
-sudo systemctl start mosquitto
-
-# 2. Start JetBot scripts
-ssh jetbot@192.168.3.8
-python3 mqtt_robot.py &
-python3 mjpeg_server.py &
-
-# 3. Start StreamDiffusion on PC
-cd StreamDiffusion
-conda activate visionpal
-python server.py --jetbot http://192.168.3.8:8554/raw
-
-# 4. Open browser → http://localhost:8555 (Web UI)
-
-# 5. (Optional) Open VisionPAL app on Vision Pro
-```
+| 感情 | 色彩 | ムード |
+|------|------|--------|
+| 🌟 curious | ゴールド・琥珀 | 暖かく輝く探索の光 |
+| 😰 anxious | ダークパープル・ノイズ | 歪んだ不安定な空間 |
+| 😊 happy | パステルピンク・虹色 | 柔らかく溢れる幸福感 |
+| 😲 surprised | 白い閃光・ブルー | 鋭い一瞬の衝撃 |
+| 😑 bored | グレー・セピア | 色褪せた平坦な世界 |
+| 😡 frustrated | 赤・オレンジ | 燃える不満 |
+| 😢 sad | 青・雨 | 滲む寂しさ |
+| 🧘 calm | 薄い水色・白 | 穏やかな静寂 |
 
 ## MQTT Topics
 
-| Topic | Direction | Payload |
-|-------|-----------|---------|
-| `vision_pal/move` | Vision Pro → JetBot | `{"direction": "forward\|left\|right\|stop", "speed": 0.0-1.0}` |
-| `vision_pal/status` | JetBot → Vision Pro | `{"status": "ready", "timestamp": ...}` |
+```
+vision_pal/
+├── move                    # 操縦コマンド (Vision Pro → JetBot)
+├── status                  # JetBotステータス
+├── perception/objects      # 物体認識データ
+├── perception/collision    # 衝突検知
+├── affect/state            # 感情状態 (JSON)
+├── memory/recall           # 記憶検索結果
+├── prompt/current          # StreamDiffusion用プロンプト
+├── monologue               # パルの独り言テキスト
+└── umwelt/state            # 統合認知状態
+```
 
-## Style Presets
+## Setup
 
-| Name | Prompt |
-|------|--------|
-| 🌿 Ghibli | anime style, studio ghibli, warm colors, hand-painted, magical |
-| 🌃 Cyberpunk | cyberpunk neon city, glowing lights, futuristic, dark atmosphere |
-| 💧 Watercolor | watercolor painting, soft colors, artistic, dreamy |
-| ✏️ Sketch | pencil sketch, detailed drawing, black and white, artistic |
-| 🖌️ Oil Paint | oil painting, impressionist, vivid colors, thick brushstrokes |
-| 👾 Pixel Art | pixel art, retro game, 16-bit style, colorful |
-| 🏯 Ukiyo-e | ukiyo-e, japanese woodblock print, traditional art |
-| 🌸 Pastel | pastel colors, soft dreamy illustration, kawaii style |
+### 1. Mosquitto (Jetson Host)
+
+```bash
+sudo systemctl start mosquitto
+```
+
+### 2. JetBot
+
+```bash
+ssh jetbot@192.168.3.8
+python3 mqtt_robot.py &
+python3 mjpeg_light.py &    # MJPEG :8554
+```
+
+### 3. Cognition Engine (Jetson Container / OpenClaw)
+
+```bash
+cd Cognition
+OPENCLAW_GATEWAY_TOKEN="$TOKEN" .venv/bin/python3 cognitive_loop.py --interval 2
+```
+
+### 4. StreamDiffusion (PC — GTX 2080 Ti)
+
+```bash
+cd StreamDiffusion
+python -m venv .venv
+source .venv/bin/activate
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+pip install streamdiffusion[tensorrt]
+python -m streamdiffusion.tools.install-tensorrt
+python server.py --jetbot http://192.168.3.8:8554/raw
+```
+
+### 5. Vision Pro
+
+```bash
+cd VisionPro
+open VisionPAL.xcodeproj   # Xcode 15+, visionOS SDK
+```
+
+## Voice Style Presets
+
+Vision Proの音声認識で切り替え:
+
+| Name | Keyword | Prompt |
+|------|---------|--------|
+| 🌿 Ghibli | ジブリ | anime style, studio ghibli, warm colors |
+| 🌃 Cyberpunk | サイバーパンク | cyberpunk neon city, glowing lights |
+| 💧 Watercolor | 水彩 | watercolor painting, soft colors |
+| ✏️ Sketch | スケッチ | pencil sketch, black and white |
+| 🖌️ Oil Paint | 油絵 | oil painting, impressionist |
+| 👾 Pixel Art | ピクセル | pixel art, retro game, 16-bit |
+| 🏯 Ukiyo-e | 浮世絵 | ukiyo-e, japanese woodblock print |
+| 🌸 Pastel | パステル | pastel colors, soft dreamy illustration |
+
+> 💡 Umweltモードではパルの感情が自動でスタイルを決定。音声スタイルはマニュアルモード用。
 
 ## Tech Stack
 
-- **Vision Pro**: Swift, SwiftUI, RealityKit, ARKit, CocoaMQTT 2.0.9, Speech Framework
-- **PC**: Python, StreamDiffusion, PyTorch, CUDA, Flask
-- **JetBot**: Python 3.6, OpenCV, GStreamer, Adafruit MotorHAT, paho-mqtt
-- **Jetson Host**: Mosquitto, OpenClaw (Docker)
+| Component | Technology |
+|-----------|-----------|
+| Vision Pro | Swift, SwiftUI, RealityKit, ARKit, CocoaMQTT, Speech Framework |
+| Cognition | Python 3.12, paho-mqtt 2.1, OpenClaw API (memory search) |
+| StreamDiffusion | Python, PyTorch, CUDA, TensorRT, Flask |
+| JetBot | Python 3.6, OpenCV, GStreamer, Adafruit MotorHAT, paho-mqtt |
+| Jetson Host | Mosquitto, OpenClaw (Docker), ElevenLabs TTS |
+| Network | MQTT (制御+認知), MJPEG (映像), HTTP (スタイル変更) |
 
 ## Project Structure
 
 ```
 VisionPAL/
-├── README.md                     # This file - System architecture
-├── .claude/
-│   └── CLAUDE.md                 # Claude Code project guide
-├── JetBot/                       # JetBot Python scripts
-│   ├── mqtt_robot.py             # MQTT robot control
-│   └── mjpeg_server.py           # Camera streaming
-├── StreamDiffusion/              # PC AI server
-│   └── server.py                 # StreamDiffusion API
-└── VisionPro/                    # Vision Pro app ⭐
-    ├── README.md                 # Build instructions
-    ├── VisionPAL.xcodeproj/      # Xcode project
-    └── VisionPAL/                # Swift source code
-        ├── VisionPALApp.swift        # App entry point
-        ├── ContentView.swift         # Main UI
-        ├── MJPEGView.swift           # MJPEG stream viewer
-        ├── RobotController.swift     # MQTT/Robot control
-        ├── VoiceStyleController.swift # Voice recognition
-        ├── ImmersiveControlView.swift # Immersive Space UI
-        ├── Info.plist                # Permissions
-        └── Assets.xcassets/          # Assets
+├── README.md                    # This file
+├── ARCHITECTURE.md              # 詳細アーキテクチャ
+├── EXHIBITION_CONCEPT.md        # 展示コンセプト
+│
+├── Cognition/                   # 🧠 認知エンジン (Jetson Container)
+│   ├── config.py                #   設定
+│   ├── perception.py            #   知覚モジュール
+│   ├── affect.py                #   感情モジュール
+│   ├── memory_recall.py         #   記憶検索
+│   ├── prompt_builder.py        #   プロンプト生成
+│   ├── cognitive_loop.py        #   メインループ
+│   └── .venv/                   #   Python venv (paho-mqtt)
+│
+├── JetBot/                      # 🤖 JetBotスクリプト
+│   ├── mqtt_robot.py            #   MQTT操縦
+│   ├── mjpeg_light.py           #   カメラMJPEG配信
+│   ├── jetbot_control.py        #   モーター制御
+│   └── collision_detect.py      #   衝突検知
+│
+├── StreamDiffusion/             # 🎨 AI映像変換 (PC)
+│   └── server.py                #   StreamDiffusion API
+│
+└── VisionPro/                   # 👓 Vision Proアプリ
+    ├── README.md                #   ビルド手順
+    ├── VisionPAL.xcodeproj/
+    └── VisionPAL/
+        ├── VisionPALApp.swift
+        ├── ContentView.swift
+        ├── MJPEGView.swift
+        ├── RobotController.swift
+        ├── VoiceStyleController.swift
+        ├── ImmersiveControlView.swift
+        └── CurvedScreenView.swift
 ```
 
-## Building Vision Pro App
+## Development Status
 
-For detailed build instructions, see [VisionPro/README.md](VisionPro/README.md).
+- [x] **Phase 1**: Cognition Engine — 知覚・感情・記憶・プロンプト生成 + TTS
+- [ ] **Phase 2**: StreamDiffusion連携 — img2img + プロンプト受信
+- [ ] **Phase 3**: Vision Pro Umwelt UI — 認知映像 + 感情ARオーバーレイ
+- [ ] **Phase 4**: 展示仕上げ — 自律走行、再起動演出、観客検知
 
-### Quick Start
+## License
 
-```bash
-cd VisionPro
-open VisionPAL.xcodeproj
-# In Xcode: ⌘ + B to build
-```
-
-### Requirements
-
-- **macOS 14 (Sonoma) or later**
-- **Xcode 15.0 or later** (with visionOS SDK)
-- **Apple Developer Account** (for device deployment)
-
-### Dependencies
-
-The following packages are automatically resolved by Xcode:
-- **CocoaMQTT 2.0.9**: MQTT client library
-- **Starscream**: WebSocket (CocoaMQTT dependency)
+Private project.
