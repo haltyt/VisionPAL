@@ -1,88 +1,137 @@
-# StreamDiffusion Server for Vision PAL
+# StreamDiffusion Server — Vision PAL
 
-Real-time AI style transfer for JetBot camera feed.
+JetBotカメラ映像をパルの認知世界（Umwelt）としてリアルタイム変換・配信するサーバー。
 
-## Architecture
+## 概要
 
 ```
-JetBot Camera (640x480)
-  → MJPEG (port 8554)
-    → This Server (RTX 2080Ti)
-      → StreamDiffusion img2img (512x512)
-      → Transformed MJPEG stream (port 8555)
-        → Vision Pro
+JetBot Camera →MJPEG→ StreamDiffusion Server ←MQTT← Cognition Engine
+                              ↓                          ↑
+                        変換済み映像                memory_search
+                              ↓                    (OpenClaw API)
+                    Vision Pro / Browser
 ```
 
-## Setup
+パルの知覚・感情・記憶に基づいて、カメラ映像がリアルタイムでスタイル変換される。
+- 嬉しい時 → 暖色系、レンズフレア、ボケ
+- 不安な時 → 暗い紫、グリッチ、断片化
+- 記憶が浮かぶ → ゴーストオーバーレイが濃くなる
+
+## セットアップ
+
+### 必要環境
+- Python 3.10+
+- NVIDIA GPU (RTX 2060+) + CUDA 11.8+（GPU変換モード）
+- GPUなしでもOpenCVトゥーンフィルタで動作
+
+### インストール
 
 ```bash
-# 1. Create environment
-conda create -n visionpal python=3.10
-conda activate visionpal
+pip install -r requirements.txt
 
-# 2. Install PyTorch (CUDA 11.8)
-pip3 install torch==2.1.0 torchvision==0.16.0 xformers --index-url https://download.pytorch.org/whl/cu118
-
-# 3. Install StreamDiffusion
-pip install "streamdiffusion[tensorrt] @ git+https://github.com/cumulo-autumn/StreamDiffusion.git@main"
-
-# 4. Fix version compatibility
-pip install numpy==1.26.4 huggingface_hub==0.25.2 transformers==4.36.0
-
-# 5. Install server dependencies
-pip install flask opencv-python==4.10.0.84
-
-# 6. (Optional) TensorRT acceleration
-python -m streamdiffusion.tools.install-tensorrt
+# GPU モード（オプション）
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+pip install streamdiffusion
 ```
 
-## Run
+## 起動
 
 ```bash
-# Full mode (with StreamDiffusion)
-python server.py --port 8555 --jetbot http://192.168.3.8:8554/raw
+# 通常起動（GPU + MQTT自動接続）
+python server.py
 
-# Demo mode (OpenCV toon filter, no GPU needed)
-python server.py --port 8555 --no-gpu
+# JetBotのMJPEG URLを指定
+python server.py --jetbot http://192.168.3.8:8554/raw
+
+# GPUなし（OpenCVトゥーンフィルタ）
+python server.py --no-gpu
+
+# ポート変更
+python server.py --port 8555
 ```
 
-## API
+## APIエンドポイント
 
-### GET /stream
-Transformed MJPEG stream. Point Vision Pro's MJPEGView here.
+| Method | Path | 説明 |
+|--------|------|------|
+| GET | `/` | Umwelt Viewer（ブラウザUI） |
+| GET | `/stream` | 変換済みMJPEGストリーム |
+| GET | `/health` | ステータス（パイプライン、感情、MQTT状態） |
+| GET | `/style` | 現在のスタイル取得 |
+| POST | `/style` | スタイル変更 `{"prompt": "...", "strength": 0.65}` |
+| POST | `/mode` | モード切替 `{"mode": "auto"}` or `{"mode": "manual"}` |
+| POST | `/transform` | 1フレーム変換（multipart image） |
+| GET | `/fps` | FPS・変換時間 |
 
-### POST /transform
-Transform a single frame.
-```bash
-curl -X POST -F "image=@photo.jpg" http://localhost:8555/transform -o output.jpg
+## MQTT連携（Cognition Engine）
+
+MQTTブローカー（デフォルト `192.168.3.5:1883`）に接続し、以下のトピックを購読：
+
+| トピック | 内容 |
+|---------|------|
+| `vision_pal/prompt/current` | SDプロンプト自動更新 |
+| `vision_pal/affect/state` | 感情状態（emotion, arousal） |
+| `vision_pal/monologue` | パルの内面独白（ログ表示） |
+
+### Auto / Manual モード
+
+- **Auto**（デフォルト）: Cognition Engineのプロンプトで自動変換
+- **Manual**: ブラウザUIやAPIから手動でスタイル指定
+
+`POST /mode {"mode": "manual"}` で切替、またはUIの「Auto Mode」ボタン。
+
+### 感情連動
+
+| パラメータ | 効果 |
+|-----------|------|
+| arousal | 変換強度に連動（高い→強い変換 0.4-0.8） |
+| emotion | UIの感情インジケーターに表示 |
+| memory_strength | 記憶の鮮明さ（UIに表示） |
+
+## プリセットスタイル
+
+UIまたは `POST /style {"style": "ghibli"}` で指定:
+
+| プリセット | 説明 |
+|-----------|------|
+| `ghibli` | ジブリ風アニメ |
+| `cyberpunk` | サイバーパンクネオン |
+| `watercolor` | 水彩画 |
+| `sketch` | 鉛筆スケッチ |
+| `oil` | 油絵・印象派 |
+| `pixel` | ピクセルアート |
+| `ukiyoe` | 浮世絵 |
+| `pastel` | パステルカラー |
+
+## Umwelt Viewer
+
+ブラウザで `http://PC:8555` にアクセスすると、リアルタイムビューアが開く：
+
+- **変換映像ストリーム** — パルの認知世界
+- **感情インジケーター** — 現在の感情がハイライト
+- **Cognitionステータス** — MQTT接続状態、最終プロンプト受信時刻
+- **FPSカウンター** — 変換速度
+- **プリセットボタン** — 手動モード時のクイック切替
+
+## アーキテクチャ
+
+```
+┌─────────────────────────────────────────────┐
+│              StreamDiffusion Server           │
+│                                               │
+│  MJPEGReader ──→ transform_frame() ──→ /stream│
+│  (JetBot:8554)       ↑                       │
+│                      │                       │
+│  CognitionSubscriber │                       │
+│  (MQTT)         prompt更新                    │
+│    ├── prompt/current → current_prompt        │
+│    ├── affect/state   → emotion, arousal      │
+│    └── monologue      → console log           │
+└─────────────────────────────────────────────┘
 ```
 
-### GET /style
-Get current style.
+## 開発メモ
 
-### POST /style
-Change style in real-time.
-```bash
-curl -X POST http://localhost:8555/style \
-  -H "Content-Type: application/json" \
-  -d '{"prompt": "cyberpunk neon city, futuristic"}'
-```
-
-### Preset Styles
-- 🌿 `ghibli` - Studio Ghibli anime
-- 🌃 `cyberpunk` - Neon cyberpunk
-- 💧 `watercolor` - Watercolor painting
-- ✏️ `sketch` - Pencil sketch
-- 🖌️ `oil` - Oil painting
-- 👾 `pixel` - Pixel art
-- 🏯 `ukiyoe` - Japanese woodblock print
-- 🎀 `pastel` - Kawaii pastel
-
-## Performance (expected)
-
-| GPU | FPS (SD-turbo 1step) | FPS (LCM 4step) |
-|-----|---------------------|-----------------|
-| RTX 4090 | 50-90 | 20-40 |
-| RTX 3080 | 25-45 | 12-20 |
-| RTX 2080Ti | 15-25 | 8-12 |
-| No GPU (toon) | 15+ | N/A |
+- StreamDiffusion未インストール時はOpenCVトゥーンフィルタにフォールバック
+- MQTT未接続でも手動モードで動作
+- `--no-gpu` フラグでCPUのみ動作（デモ・テスト用）
