@@ -26,10 +26,21 @@ from PIL import Image
 
 from flask import Flask, request, Response, jsonify, send_from_directory
 
+# MQTT (optional)
+try:
+    import paho.mqtt.client as mqtt
+    HAS_MQTT = True
+except ImportError:
+    HAS_MQTT = False
+
 # StreamDiffusion imports (lazy load)
 stream_pipe = None
 current_prompt = "anime style, studio ghibli, warm colors, hand-painted"
 current_strength = 0.65
+current_emotion = "calm"
+current_arousal = 0.5
+current_memory_strength = 0.0
+cognition_prompt = None  # Cognition Engineからのプロンプト（Noneなら手動モード）
 device = "cuda"
 
 # FPS tracking
@@ -225,6 +236,98 @@ class MJPEGReader:
 mjpeg_reader = MJPEGReader()
 
 
+# === MQTT Subscriber (Cognition Engine連携) ===
+
+class CognitionSubscriber:
+    """Cognition EngineからのMQTTプロンプトを受信"""
+
+    def __init__(self, broker="192.168.3.5", port=1883):
+        self.broker = broker
+        self.port = port
+        self.client = None
+        self.connected = False
+        self.last_prompt_time = 0
+        self.auto_mode = True  # True=Cognition自動, False=手動
+
+    def start(self):
+        if not HAS_MQTT:
+            print("[MQTT] paho-mqtt not installed, running manual mode only")
+            return
+
+        try:
+            self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, "streamdiffusion_server")
+            self.client.on_connect = self._on_connect
+            self.client.on_message = self._on_message
+            self.client.on_disconnect = self._on_disconnect
+            self.client.connect(self.broker, self.port, 60)
+            self.client.loop_start()
+            print("[MQTT] Connecting to {}:{}...".format(self.broker, self.port))
+        except Exception as e:
+            print("[MQTT] Connection failed: {}".format(e))
+
+    def _on_connect(self, client, userdata, flags, reason_code, properties=None):
+        self.connected = True
+        print("[MQTT] Connected! Subscribing to cognition topics...")
+        client.subscribe("vision_pal/prompt/current")
+        client.subscribe("vision_pal/affect/state")
+        client.subscribe("vision_pal/monologue")
+
+    def _on_disconnect(self, client, userdata, flags, reason_code, properties=None):
+        self.connected = False
+        print("[MQTT] Disconnected")
+
+    def _on_message(self, client, userdata, msg):
+        global current_prompt, current_strength, current_emotion
+        global current_arousal, current_memory_strength, cognition_prompt, stream_pipe
+
+        try:
+            data = json.loads(msg.payload.decode("utf-8"))
+        except Exception:
+            return
+
+        topic = msg.topic
+
+        if topic == "vision_pal/prompt/current" and self.auto_mode:
+            # Cognition Engineからのプロンプト
+            sd_prompt = data.get("sd_prompt", "")
+            if sd_prompt:
+                cognition_prompt = sd_prompt
+                current_prompt = sd_prompt
+                current_emotion = data.get("emotion", "calm")
+                current_arousal = data.get("arousal", 0.5)
+                current_memory_strength = data.get("memory_strength", 0)
+                self.last_prompt_time = time.time()
+
+                # StreamDiffusionパイプラインのprompt更新
+                if stream_pipe is not None:
+                    try:
+                        stream_pipe.prepare(current_prompt)
+                    except Exception as e:
+                        print("[MQTT] Prompt update failed: {}".format(e))
+
+                # strengthを感情arousalに連動
+                current_strength = 0.4 + (current_arousal * 0.4)  # 0.4-0.8
+
+        elif topic == "vision_pal/affect/state":
+            current_emotion = data.get("emotion", current_emotion)
+            current_arousal = data.get("arousal", current_arousal)
+
+        elif topic == "vision_pal/monologue":
+            # 独白ログ（デバッグ/UI表示用）
+            text = data.get("text", "")
+            if text:
+                print("[MONOLOGUE] {} | {}".format(
+                    data.get("emotion", "?"), text[:60]))
+
+    def stop(self):
+        if self.client:
+            self.client.loop_stop()
+            self.client.disconnect()
+
+
+cognition_sub = CognitionSubscriber()
+
+
 # === API Endpoints ===
 
 @app.route("/health")
@@ -234,7 +337,25 @@ def health():
         "pipeline": "streamdiffusion" if stream_pipe else "opencv_toon",
         "prompt": current_prompt,
         "strength": current_strength,
+        "emotion": current_emotion,
+        "arousal": current_arousal,
+        "memory_strength": current_memory_strength,
+        "cognition_mode": cognition_sub.auto_mode,
+        "mqtt_connected": cognition_sub.connected,
+        "last_cognition_prompt": time.time() - cognition_sub.last_prompt_time if cognition_sub.last_prompt_time else None,
         "timestamp": time.time(),
+    })
+
+
+@app.route("/mode", methods=["POST"])
+def set_mode():
+    """手動/自動モード切替"""
+    data = request.get_json(force=True)
+    mode = data.get("mode", "auto")
+    cognition_sub.auto_mode = (mode == "auto")
+    return jsonify({
+        "mode": "auto" if cognition_sub.auto_mode else "manual",
+        "status": "updated",
     })
 
 
@@ -364,17 +485,34 @@ input[type=text] { width:400px; padding:8px; font-size:16px; border-radius:8px; 
 button { padding:8px 20px; font-size:16px; border-radius:8px; border:none; background:#6c5ce7; color:#fff; cursor:pointer; margin:5px; }
 button:hover { background:#a29bfe; }
 #status { color:#aaa; margin-top:10px; }
+#emotion-bar { display:flex; gap:10px; justify-content:center; padding:10px; font-size:20px; }
+.emotion-indicator { padding:5px 15px; border-radius:20px; background:#222; transition: all 0.5s; }
+.emotion-indicator.active { background:#6c5ce7; transform:scale(1.2); }
+#cognition-status { color:#0f0; font-family:monospace; padding:5px; }
 #fps { position:fixed; top:10px; right:10px; background:rgba(0,0,0,0.8); padding:8px 16px; border-radius:8px; font-family:monospace; font-size:18px; z-index:100; }
 #fps .num { color:#0f0; font-size:24px; font-weight:bold; }
 </style>
 </head>
 <body>
 <div id="fps"><span class="num">--</span> FPS | <span id="ms">--</span>ms</div>
-<h1>Vision PAL - AI World Filter</h1>
+<h1>Vision PAL - Umwelt Viewer</h1>
+
+<div id="emotion-bar">
+    <span class="emotion-indicator" data-e="curious">🔍 curious</span>
+    <span class="emotion-indicator" data-e="excited">⚡ excited</span>
+    <span class="emotion-indicator" data-e="calm">🌊 calm</span>
+    <span class="emotion-indicator" data-e="happy">😊 happy</span>
+    <span class="emotion-indicator" data-e="anxious">😰 anxious</span>
+    <span class="emotion-indicator" data-e="lonely">🌙 lonely</span>
+    <span class="emotion-indicator" data-e="startled">😲 startled</span>
+    <span class="emotion-indicator" data-e="bored">😑 bored</span>
+</div>
+<div id="cognition-status">Cognition: waiting...</div>
 
 <div class="controls">
     <input type="text" id="prompt" placeholder="Style prompt..." value="anime style, studio ghibli, warm colors">
     <button onclick="setStyle()">Apply Style</button>
+    <button onclick="toggleMode()" id="mode-btn">🤖 Auto Mode</button>
     <div id="status">Loading...</div>
 </div>
 
@@ -417,13 +555,46 @@ fetch('/health').then(r => r.json()).then(d => {
         'Pipeline: ' + d.pipeline + ' | Style: ' + d.prompt;
 });
 
-// FPS counter (poll every second)
+let autoMode = true;
+
+async function toggleMode() {
+    autoMode = !autoMode;
+    await fetch('/mode', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({mode: autoMode ? 'auto' : 'manual'})
+    });
+    document.getElementById('mode-btn').textContent = autoMode ? '🤖 Auto Mode' : '✋ Manual Mode';
+    document.getElementById('mode-btn').style.background = autoMode ? '#6c5ce7' : '#e74c3c';
+}
+
+// Poll FPS + cognition status every second
 setInterval(async () => {
     try {
         const res = await fetch('/fps');
         const d = await res.json();
         document.querySelector('#fps .num').textContent = d.fps.toFixed(1);
         document.getElementById('ms').textContent = d.transform_ms.toFixed(0);
+    } catch(e) {}
+
+    try {
+        const res = await fetch('/health');
+        const h = await res.json();
+        // Update emotion indicator
+        document.querySelectorAll('.emotion-indicator').forEach(el => {
+            el.classList.toggle('active', el.dataset.e === h.emotion);
+        });
+        // Cognition status
+        const mqttStatus = h.mqtt_connected ? '🟢 MQTT' : '🔴 MQTT';
+        const lastPrompt = h.last_cognition_prompt ? h.last_cognition_prompt.toFixed(0) + 's ago' : 'never';
+        document.getElementById('cognition-status').textContent =
+            mqttStatus + ' | Emotion: ' + (h.emotion||'-') +
+            ' | Memory: ' + (h.memory_strength||0).toFixed(2) +
+            ' | Last prompt: ' + lastPrompt;
+        // Update prompt display in auto mode
+        if (autoMode && h.prompt) {
+            document.getElementById('prompt').value = h.prompt.substring(0, 80) + '...';
+        }
     } catch(e) {}
 }, 1000);
 </script>
@@ -461,6 +632,9 @@ if __name__ == "__main__":
     # MJPEG reader起動
     mjpeg_reader.url = args.jetbot
     mjpeg_reader.start()
+
+    # MQTT Cognition subscriber起動
+    cognition_sub.start()
     
     # StreamDiffusionパイプライン初期化
     if not args.no_gpu:
