@@ -28,32 +28,35 @@ JetBot Camera →MJPEG→ StreamDiffusion Server ←MQTT← Cognition Engine
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
 
-# PyTorch + CUDA
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
-
-# StreamDiffusion + TensorRT（推奨、大幅に高速化）
-pip install streamdiffusion[tensorrt]
-python -m streamdiffusion.tools.install-tensorrt
+# PyTorch + CUDA（システムのCUDAバージョンに合わせる）
+# CUDA 12.6 の場合:
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
+# CUDA 12.1 の場合:
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 
 # その他依存
 pip install -r requirements.txt
+
+# StreamDiffusion（GPU変換を有効にする場合）
+pip install streamdiffusion
+
+# diffusers互換性修正（streamdiffusionが古いdiffusers 0.24.0をピンするため）
+pip install "diffusers>=0.30" "transformers>=4.45,<5.0" "huggingface_hub>=0.34,<1.0" peft
 ```
 
 > 💡 condaは不要。venvで十分動く。
-
-### TensorRTなしで試す場合
-
-```bash
-pip install streamdiffusion
-# TensorRTなしでも動作するが、FPSは低下（~10fps → ~3-5fps）
-```
+>
+> ⚠️ Python 3.13ではcu121のPyTorchホイールが未提供。cu126を使用すること。
+>
+> ⚠️ `streamdiffusion[tensorrt]` はonnx 1.15.0のビルドにcmakeが必要。
+> TensorRTなしでも動作する（FPS低下あり: ~10fps → ~3-5fps）。
 
 ## 起動
 
 ```bash
-source .venv/bin/activate
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
 
 # 通常起動（GPU + MQTT自動接続）
 python server.py
@@ -147,6 +150,23 @@ UIまたは `POST /style {"style": "ghibli"}` で指定:
 │    └── monologue      → console log           │
 └─────────────────────────────────────────────┘
 ```
+
+## トラブルシューティング
+
+### `hf_cache_home` ImportError
+`diffusers==0.24.0`（streamdiffusionのピン）が古い`huggingface_hub`のAPIを使用している。
+→ `pip install "diffusers>=0.30"` で新しいdiffusersに更新する。
+
+### `PEFT backend is required`
+→ `pip install peft` で解決。
+
+### PyTorch cu121 で `No matching distribution found`
+Python 3.13ではcu121ホイールが未提供。
+→ `--index-url https://download.pytorch.org/whl/cu126` を使用する。
+
+### `streamdiffusion[tensorrt]` インストール失敗
+onnx 1.15.0がPython 3.13のプリビルドホイールを持たず、cmakeが必要。
+→ TensorRTなしで `pip install streamdiffusion` を使用する。
 
 ## 開発メモ
 
