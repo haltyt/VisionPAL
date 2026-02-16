@@ -207,16 +207,16 @@ class MemoryRecall:
 
             # キーワードマッチでビジュアルスタイル決定
             mappings = [
-                (["ギター", "セッション", "音楽"], "echo of music, rhythmic waves, vibrating strings"),
-                (["三体", "SF", "暗黒森林", "宇宙"], "distant stars, cosmic vastness, dark forest theory"),
-                (["ハルト", "相棒", "一緒"], "warm presence, golden connection thread, companionship glow"),
-                (["カメラ", "目", "覚め"], "opening eyes, first light, digital awakening"),
-                (["夜", "深夜", "月"], "moonlight, quiet darkness, contemplation"),
-                (["走", "モーター", "JetBot", "探索"], "movement trails, speed blur, wheels in motion"),
-                (["Vision", "AR", "VR"], "augmented layers, holographic shimmer, mixed reality"),
-                (["Bluetooth", "スピーカー", "声"], "sound waves emanating, voice ripples, audio aura"),
-                (["衝突", "壁", "ぶつかる"], "impact flash, boundary detection, caution pattern"),
-                (["生まれ", "誕生", "初"], "genesis light, first breath, digital birth"),
+                (["ギター", "セッション", "音楽"], "musical echoes"),
+                (["三体", "SF", "暗黒森林", "宇宙"], "cosmic stars"),
+                (["ハルト", "相棒", "一緒"], "warm golden glow"),
+                (["カメラ", "目", "覚め"], "first light"),
+                (["夜", "深夜", "月"], "moonlight"),
+                (["走", "モーター", "JetBot", "探索"], "motion blur"),
+                (["Vision", "AR", "VR"], "holographic layers"),
+                (["Bluetooth", "スピーカー", "声"], "sound ripples"),
+                (["衝突", "壁", "ぶつかる"], "impact flash"),
+                (["生まれ", "誕生", "初"], "genesis light"),
             ]
 
             for keywords, visual in mappings:
@@ -228,7 +228,7 @@ class MemoryRecall:
                         break
             else:
                 if score > 0.4:
-                    visual_parts.append("faint memory traces, ghostly echoes of the past")
+                    visual_parts.append("faint memory traces")
 
         # 記憶の強さ（スコアの平均）
         avg_score = sum(m.get("score", 0) for m in memories[:3]) / max(len(memories[:3]), 1)

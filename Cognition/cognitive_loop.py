@@ -63,8 +63,8 @@ class CognitiveLoop:
             print("[CogLoop] MQTT disabled (no paho-mqtt)")
             return
 
-        broker = self.config.MQTT_BROKER
-        port = self.config.MQTT_PORT
+        broker = cfg.MQTT_BROKER
+        port = cfg.MQTT_PORT
 
         self.mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, "cognition_engine")
         self.mqtt_client.on_connect = self._on_connect
@@ -81,8 +81,28 @@ class CognitiveLoop:
         if reason_code == 0 or str(reason_code) == "Success":
             self.mqtt_connected = True
             print("[CogLoop] MQTT connected!")
+            # 知覚データと衝突データを購読
+            client.subscribe(self.perception.topic)
+            client.subscribe(cfg.TOPIC_COLLISION)
+            client.message_callback_add(self.perception.topic, self._on_perception)
+            client.message_callback_add(cfg.TOPIC_COLLISION, self._on_collision)
+            print("[CogLoop] Subscribed: {}, {}".format(self.perception.topic, cfg.TOPIC_COLLISION))
         else:
             print("[CogLoop] MQTT connect failed, rc={}".format(reason_code))
+
+    def _on_perception(self, client, userdata, msg):
+        """知覚データ受信"""
+        self.perception.on_mqtt_message(msg.payload)
+
+    def _on_collision(self, client, userdata, msg):
+        """衝突データ受信"""
+        try:
+            data = json.loads(msg.payload)
+            if data.get("collision"):
+                self.affect.collision_event()
+                print("[CogLoop] 💥 Collision received!")
+        except Exception:
+            pass
 
     def _on_disconnect(self, client, userdata, flags, reason_code, properties=None):
         self.mqtt_connected = False
@@ -100,19 +120,24 @@ class CognitiveLoop:
     def speak(self, text):
         """パルの独白をTTSで喋る（非同期）"""
         if not self.tts_enabled or not text:
+            print("[TTS] skip: enabled={} text={}".format(self.tts_enabled, bool(text)))
             return
 
         # クールダウンチェック
         now = time.time()
-        if now - self.last_monologue_time < self.monologue_cooldown:
+        elapsed = now - self.last_monologue_time
+        if elapsed < self.monologue_cooldown:
+            print("[TTS] cooldown ({:.0f}s < {:.0f}s)".format(elapsed, self.monologue_cooldown))
             return
         # 同じセリフは繰り返さない
         if text == self.last_monologue:
+            print("[TTS] same text, skip")
             return
 
         self.last_monologue = text
         self.last_monologue_time = now
 
+        print("[TTS] speaking: {}".format(text[:50]))
         # 非同期でTTS実行
         t = threading.Thread(target=self._speak_impl, args=(text,), daemon=True)
         t.start()
@@ -125,8 +150,11 @@ class CognitiveLoop:
                     self._speak_local(text)
                 else:
                     self._speak_openclaw(text)
+                print("[TTS] done OK", flush=True)
             except Exception as e:
-                print("[CogLoop] TTS error: {}".format(e))
+                import traceback
+                print("[TTS] error: {}".format(e), flush=True)
+                traceback.print_exc()
 
     def _speak_openclaw(self, text):
         """OpenClaw TTS API → Jetsonスピーカー再生"""
@@ -174,7 +202,7 @@ class CognitiveLoop:
             subprocess.run(
                 ["ssh", "-o", "StrictHostKeyChecking=no",
                  "{}@{}".format(self.jetson_user, self.jetson_host),
-                 "bash ~/pal_speak.sh '{}'".format(text.replace("'", "'\\''"))],
+                 "bash ~/PAL/scripts/pal_speak.sh '{}'".format(text.replace("'", "'\\''"))],
                 timeout=30,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -185,9 +213,9 @@ class CognitiveLoop:
     def _play_on_jetson(self, media_path):
         """生成された音声ファイルをJetsonスピーカーで再生"""
         try:
-            # コンテナ内のファイルをJetsonにscpして再生
             remote_path = "/tmp/pal_cognitive_tts.mp3"
-            subprocess.run(
+            print("[TTS] scp {} -> jetson".format(media_path), flush=True)
+            r1 = subprocess.run(
                 ["scp", "-o", "StrictHostKeyChecking=no",
                  media_path,
                  "{}@{}:{}".format(self.jetson_user, self.jetson_host, remote_path)],
@@ -195,17 +223,29 @@ class CognitiveLoop:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
-            # Jetsonで再生
-            subprocess.run(
+            print("[TTS] scp rc={}".format(r1.returncode), flush=True)
+            if r1.returncode != 0:
+                print("[TTS] scp stderr: {}".format(r1.stderr.decode()), flush=True)
+                return
+            # Jetsonで再生（BT再接続付き）
+            print("[TTS] playing on jetson...", flush=True)
+            play_cmd = (
+                "pactl set-default-sink bluez_sink.AC_9B_0A_AA_B8_F6.a2dp_sink 2>/dev/null || "
+                "(echo -e 'connect AC:9B:0A:AA:B8:F6\\nquit' | sudo bluetoothctl > /dev/null 2>&1 && sleep 3 && "
+                "pactl set-default-sink bluez_sink.AC_9B_0A_AA_B8_F6.a2dp_sink 2>/dev/null); "
+                "ffmpeg -y -i '{}' -f wav - 2>/dev/null | paplay --device=bluez_sink.AC_9B_0A_AA_B8_F6.a2dp_sink"
+            ).format(remote_path)
+            r2 = subprocess.run(
                 ["ssh", "-o", "StrictHostKeyChecking=no",
                  "{}@{}".format(self.jetson_user, self.jetson_host),
-                 "bash ~/pal_speak.sh --file '{}'".format(remote_path)],
+                 play_cmd],
                 timeout=30,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
+            print("[TTS] play rc={} stderr={}".format(r2.returncode, r2.stderr.decode()[:200]), flush=True)
         except Exception as e:
-            print("[TTS] Play on Jetson failed: {}".format(e))
+            print("[TTS] Play on Jetson failed: {}".format(e), flush=True)
 
     def run_cycle(self):
         """1サイクル実行: 知覚→感情→記憶→プロンプト→出力"""
@@ -253,11 +293,16 @@ class CognitiveLoop:
 
         # 6. 独白（感情が変わった時 or 一定間隔）
         monologue = prompt_data.get("monologue", "")
-        emotion_changed = affect_data.get("emotion") != self.last_emotion
-        self.last_emotion = affect_data.get("emotion", "")
+        current_emotion = affect_data.get("emotion", "")
+        emotion_changed = current_emotion != self.last_emotion
+        if emotion_changed:
+            print("[Mono] emotion changed: {} -> {}".format(self.last_emotion, current_emotion))
+        self.last_emotion = current_emotion
 
-        if monologue and (emotion_changed or
-                          time.time() - self.last_monologue_time > 60):
+        time_since = time.time() - self.last_monologue_time
+        should_speak = monologue and (emotion_changed or time_since > 60)
+        if should_speak:
+            print("[Mono] trigger: emotion_changed={} time_since={:.0f}s".format(emotion_changed, time_since))
             self.speak(monologue)
             # MQTTにも独白をpublish
             self.publish("vision_pal/monologue", {

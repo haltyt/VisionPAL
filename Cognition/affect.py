@@ -19,6 +19,10 @@ class Affect:
         self.moving_since = 0    # 移動開始時刻
         self.idle_since = time.time()  # 静止開始時刻
 
+    def collision_event(self):
+        """外部から衝突イベントを通知"""
+        self.collision_at = time.time()
+
     def update(self, perception_data, motor_state="stopped", collision=False):
         """知覚データとモーター状態から感情を更新"""
         now = time.time()

@@ -7,56 +7,52 @@ import time
 # 感情→ビジュアルスタイルのマッピング
 EMOTION_STYLES = {
     "curious": {
-        "colors": "soft cyan, pale yellow, gentle gradients",
-        "mood": "ethereal, delicate, exploring, soft focus edges",
+        "colors": "soft cyan, pale yellow",
+        "mood": "ethereal, exploring, soft focus",
         "music": "静かなピアノの音",
     },
     "excited": {
-        "colors": "vivid orange, electric blue, bright magenta",
-        "mood": "dynamic, energetic, sparkling particles, motion blur",
+        "colors": "vivid orange, electric blue",
+        "mood": "dynamic, sparkling, motion blur",
         "music": "ワクワクするドラムビート",
     },
     "calm": {
-        "colors": "deep blue, soft green, warm amber",
-        "mood": "serene, peaceful, slow motion, gentle light",
+        "colors": "deep blue, warm amber",
+        "mood": "serene, gentle light",
         "music": "穏やかな波の音",
     },
     "anxious": {
-        "colors": "dark purple, muted red, cold grey",
-        "mood": "distorted, glitchy, fragmented, sharp edges",
+        "colors": "dark purple, cold grey",
+        "mood": "distorted, glitchy, fragmented",
         "music": "不協和音が混じる低い音",
     },
     "happy": {
-        "colors": "golden yellow, warm pink, soft white",
-        "mood": "glowing, warm, radiant, lens flare, bokeh",
+        "colors": "golden yellow, warm pink",
+        "mood": "glowing, radiant, bokeh",
         "music": "明るいメロディ",
     },
     "lonely": {
-        "colors": "deep indigo, cool grey, faint silver",
-        "mood": "vast empty space, single light source, melancholic beauty",
+        "colors": "deep indigo, faint silver",
+        "mood": "vast empty space, melancholic",
         "music": "遠くで聞こえるオルゴール",
     },
     "startled": {
-        "colors": "flash white, sharp red, electric yellow",
-        "mood": "high contrast, motion blur, impact lines, manga speed lines",
+        "colors": "flash white, sharp red",
+        "mood": "high contrast, impact lines",
         "music": "ドキッとする効果音",
     },
     "bored": {
-        "colors": "desaturated, beige, pale lavender",
-        "mood": "flat, minimal, still life, muted tones",
+        "colors": "desaturated beige, pale lavender",
+        "mood": "flat, minimal, muted",
         "music": "単調なハミング",
     },
 }
 
-# 基本プロンプトテンプレート
+# 基本プロンプトテンプレート (CLIP 77トークン制限に収める ~40-50 tokens)
 BASE_PROMPT = (
-    "dreamlike digital consciousness visualization, "
-    "abstract AI perception, {scene_desc}, "
+    "dreamlike AI consciousness, {scene_desc}, "
     "{emotion_mood}, {emotion_colors}, "
-    "{memory_visual}, "
-    "memory strength {mem_opacity}, "
-    "digital creature's subjective experience, "
-    "masterpiece, best quality"
+    "{memory_visual}, best quality"
 )
 
 NEGATIVE_PROMPT = (
@@ -92,33 +88,17 @@ class PromptBuilder:
         # シーン記述
         scene_desc = self._build_scene_desc(perception)
 
-        # 記憶の視覚的不透明度（強い記憶ほど濃く出る）
         mem_strength = memory_data.get("memory_strength", 0)
-        if mem_strength > 0.5:
-            mem_opacity = "high, vivid ghostly overlay"
-        elif mem_strength > 0.35:
-            mem_opacity = "medium, translucent memory echoes"
-        else:
-            mem_opacity = "low, barely visible whispers"
-
-        # 記憶のビジュアル記述
         mem_visual = memory_data.get("visual_description", "quiet mind")
 
-        # SDプロンプト組み立て
         sd_prompt = BASE_PROMPT.format(
             scene_desc=scene_desc,
             emotion_mood=style["mood"],
             emotion_colors=style["colors"],
             memory_visual=mem_visual,
-            mem_opacity=mem_opacity,
         )
 
-        # 感情の強さでプロンプトウェイトを調整
         arousal = affect.get("arousal", 0.5)
-        if arousal > 0.7:
-            sd_prompt += ", (intense emotional energy:1.3)"
-        elif arousal < 0.3:
-            sd_prompt += ", (subdued quiet contemplation:1.2)"
 
         # 内面独白を生成
         monologue = self._build_monologue(perception, affect, memory_data, style)
@@ -147,31 +127,19 @@ class PromptBuilder:
         }
 
     def _build_scene_desc(self, perception):
-        """知覚データからシーン記述を構築"""
-        parts = []
-
-        scene = perception.get("scene", "")
-        if scene:
-            parts.append(scene)
-
-        objects = perception.get("objects", [])
-        if objects:
-            labels = [o.get("label", "") for o in objects[:5]]
-            labels = [l for l in labels if l]
-            if labels:
-                parts.append("detecting: " + " and ".join(labels))
-
+        """知覚データからシーン記述を構築（短く）"""
         has_person = perception.get("has_person", False)
-        if has_person:
-            parts.append("warm human presence nearby")
-
         object_count = perception.get("object_count", 0)
-        if object_count == 0:
-            parts.append("empty void, nothing detected")
-        elif object_count > 5:
-            parts.append("rich complex environment")
 
-        return ", ".join(parts) if parts else "abstract digital space"
+        if has_person:
+            return "human presence nearby"
+        elif object_count > 3:
+            return "complex environment"
+        elif object_count > 0:
+            labels = [o.get("label", "") for o in perception.get("objects", [])[:3]]
+            return " ".join(l for l in labels if l) or "objects detected"
+        else:
+            return "empty void"
 
     def _build_monologue(self, perception, affect, memory_data, style):
         """パルの内面独白を生成（TTS用日本語テキスト）"""
