@@ -21,6 +21,7 @@ from perception import Perception
 from affect import Affect
 from memory_recall import MemoryRecall
 from prompt_builder import PromptBuilder
+from effect_generator import EffectGenerator
 import config as cfg
 
 
@@ -51,6 +52,10 @@ class CognitiveLoop:
         self.monologue_history = []  # 直近の独白履歴（重複防止）
         self.last_emotion = ""
         self.tts_lock = threading.Lock()
+
+        # エフェクト生成
+        self.effect_gen = EffectGenerator(use_llm=True)
+        self.last_effect_emotion = ""
 
         # Discord通知
         self.discord_enabled = True
@@ -407,6 +412,36 @@ class CognitiveLoop:
         if emotion_changed:
             print("[Mono] emotion changed: {} -> {}".format(self.last_emotion, current_emotion))
         self.last_emotion = current_emotion
+
+        # 6.5. エフェクト生成（感情変化時）
+        if emotion_changed and current_emotion != self.last_effect_emotion:
+            self.last_effect_emotion = current_emotion
+            vlm_scene_for_effect = perception_data.get("vlm_scene", "")
+            vlm_people_for_effect = perception_data.get("vlm_people", 0)
+            # 非同期でエフェクト生成（メインループをブロックしない）
+            def _gen_effect():
+                try:
+                    effect = self.effect_gen.generate(
+                        current_emotion,
+                        affect_data.get("valence", 0.5),
+                        affect_data.get("arousal", 0.3),
+                        vlm_scene_for_effect,
+                        vlm_people_for_effect,
+                    )
+                    if effect:
+                        self.publish(cfg.TOPIC_EFFECT, {
+                            "effect": effect,
+                            "emotion": current_emotion,
+                            "timestamp": time.time(),
+                        })
+                        ptype = effect.get("particles", {}).get("type", "?")
+                        pptype = effect.get("postProcess", {}).get("type", "?")
+                        self.notify_discord(
+                            "✨ **Effect** | {} → 🎆{} + 🌈{}".format(
+                                current_emotion, ptype, pptype))
+                except Exception as e:
+                    print("[Effect] Error: {}".format(e))
+            threading.Thread(target=_gen_effect, daemon=True).start()
 
         time_since = time.time() - self.last_monologue_time
         # VLMシーンに変化があるかチェック

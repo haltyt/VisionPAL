@@ -12,6 +12,7 @@ TOPIC_MEMORY = "vision_pal/memory/recall"
 TOPIC_PROMPT = "vision_pal/prompt/current"
 TOPIC_SCENE = "vision_pal/perception/scene"
 TOPIC_UMWELT = "vision_pal/umwelt/state"
+TOPIC_EFFECT = "vision_pal/effect"
 TOPIC_MOVE = "vision_pal/move"
 TOPIC_STATUS = "vision_pal/status"
 
