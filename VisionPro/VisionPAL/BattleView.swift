@@ -1,5 +1,6 @@
 import SwiftUI
 import RealityKit
+import ARKit
 
 // MARK: - Battle Window View (2D UI)
 

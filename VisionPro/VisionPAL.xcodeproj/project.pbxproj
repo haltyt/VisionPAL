@@ -7,6 +7,11 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		10CCD4522F485C33000CF0E3 /* MetalSplatter in Frameworks */ = {isa = PBXBuildFile; productRef = 10CCD4512F485C33000CF0E3 /* MetalSplatter */; };
+		10CCD4542F485C33000CF0E3 /* PLYIO in Frameworks */ = {isa = PBXBuildFile; productRef = 10CCD4532F485C33000CF0E3 /* PLYIO */; };
+		10CCD4562F485C33000CF0E3 /* SampleBoxRenderer in Frameworks */ = {isa = PBXBuildFile; productRef = 10CCD4552F485C33000CF0E3 /* SampleBoxRenderer */; };
+		10CCD4582F485C33000CF0E3 /* SplatIO in Frameworks */ = {isa = PBXBuildFile; productRef = 10CCD4572F485C33000CF0E3 /* SplatIO */; };
+		10CCD45A2F485C33000CF0E3 /* SplatConverter in Frameworks */ = {isa = PBXBuildFile; productRef = 10CCD4592F485C33000CF0E3 /* SplatConverter */; };
 		10DD89F12F3F49B600E354E3 /* RealityKitContent in Frameworks */ = {isa = PBXBuildFile; productRef = 10DD89F02F3F49B600E354E3 /* RealityKitContent */; };
 		10DD8A8A2F3F577400E354E3 /* CocoaMQTT in Frameworks */ = {isa = PBXBuildFile; productRef = 10DD8A892F3F577400E354E3 /* CocoaMQTT */; };
 		10DD8A8C2F3F577400E354E3 /* CocoaMQTTWebSocket in Frameworks */ = {isa = PBXBuildFile; productRef = 10DD8A8B2F3F577400E354E3 /* CocoaMQTTWebSocket */; };
@@ -43,8 +48,13 @@
 			buildActionMask = 2147483647;
 			files = (
 				10DD8A8C2F3F577400E354E3 /* CocoaMQTTWebSocket in Frameworks */,
+				10CCD4562F485C33000CF0E3 /* SampleBoxRenderer in Frameworks */,
+				10CCD45A2F485C33000CF0E3 /* SplatConverter in Frameworks */,
 				10DD8A8A2F3F577400E354E3 /* CocoaMQTT in Frameworks */,
+				10CCD4542F485C33000CF0E3 /* PLYIO in Frameworks */,
 				10DD89F12F3F49B600E354E3 /* RealityKitContent in Frameworks */,
+				10CCD4582F485C33000CF0E3 /* SplatIO in Frameworks */,
+				10CCD4522F485C33000CF0E3 /* MetalSplatter in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -90,6 +100,11 @@
 				10DD89F02F3F49B600E354E3 /* RealityKitContent */,
 				10DD8A892F3F577400E354E3 /* CocoaMQTT */,
 				10DD8A8B2F3F577400E354E3 /* CocoaMQTTWebSocket */,
+				10CCD4512F485C33000CF0E3 /* MetalSplatter */,
+				10CCD4532F485C33000CF0E3 /* PLYIO */,
+				10CCD4552F485C33000CF0E3 /* SampleBoxRenderer */,
+				10CCD4572F485C33000CF0E3 /* SplatIO */,
+				10CCD4592F485C33000CF0E3 /* SplatConverter */,
 			);
 			productName = VisionPAL;
 			productReference = 10DD89EB2F3F49B600E354E3 /* VisionPAL.app */;
@@ -121,6 +136,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				10DD8A882F3F577400E354E3 /* XCRemoteSwiftPackageReference "CocoaMQTT" */,
+				10CCD4502F485C33000CF0E3 /* XCRemoteSwiftPackageReference "MetalSplatter" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 10DD89EC2F3F49B600E354E3 /* Products */;
@@ -366,6 +382,14 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		10CCD4502F485C33000CF0E3 /* XCRemoteSwiftPackageReference "MetalSplatter" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/scier/MetalSplatter";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.0.1;
+			};
+		};
 		10DD8A882F3F577400E354E3 /* XCRemoteSwiftPackageReference "CocoaMQTT" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/emqx/CocoaMQTT.git";
@@ -377,6 +401,31 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		10CCD4512F485C33000CF0E3 /* MetalSplatter */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 10CCD4502F485C33000CF0E3 /* XCRemoteSwiftPackageReference "MetalSplatter" */;
+			productName = MetalSplatter;
+		};
+		10CCD4532F485C33000CF0E3 /* PLYIO */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 10CCD4502F485C33000CF0E3 /* XCRemoteSwiftPackageReference "MetalSplatter" */;
+			productName = PLYIO;
+		};
+		10CCD4552F485C33000CF0E3 /* SampleBoxRenderer */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 10CCD4502F485C33000CF0E3 /* XCRemoteSwiftPackageReference "MetalSplatter" */;
+			productName = SampleBoxRenderer;
+		};
+		10CCD4572F485C33000CF0E3 /* SplatIO */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 10CCD4502F485C33000CF0E3 /* XCRemoteSwiftPackageReference "MetalSplatter" */;
+			productName = SplatIO;
+		};
+		10CCD4592F485C33000CF0E3 /* SplatConverter */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 10CCD4502F485C33000CF0E3 /* XCRemoteSwiftPackageReference "MetalSplatter" */;
+			productName = SplatConverter;
+		};
 		10DD89F02F3F49B600E354E3 /* RealityKitContent */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = RealityKitContent;

@@ -1,6 +1,7 @@
 import Foundation
 import Metal
 import simd
+import QuartzCore
 
 /// Single ripple instance
 struct Ripple {
