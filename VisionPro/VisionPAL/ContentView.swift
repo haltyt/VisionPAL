@@ -4,11 +4,16 @@ struct ContentView: View {
     @EnvironmentObject var robot: RobotController
     @EnvironmentObject var voiceStyle: VoiceStyleController
     @EnvironmentObject var effectController: EmotionEffectController
+    @EnvironmentObject var battleController: BattleController
+    @EnvironmentObject var monsterARController: MonsterARController
     @Environment(\.openImmersiveSpace) var openImmersiveSpace
     @Environment(\.dismissImmersiveSpace) var dismissImmersiveSpace
+    @Environment(\.openWindow) var openWindow
     @State private var isImmersive = false
     @State private var isEffectMode = false
     @State private var isCurvedMode = false
+    @State private var isBattleArena = false
+    @State private var isEmotionMonster = false
     @State private var currentCameraURL: URL?
     
     private var desiredCameraURL: URL {
@@ -76,6 +81,45 @@ struct ContentView: View {
                             if newValue {
                                 if isEffectMode { isEffectMode = false; await dismissImmersiveSpace() }
                                 await openImmersiveSpace(id: "ImmersiveControl")
+                            } else {
+                                await dismissImmersiveSpace()
+                            }
+                        }
+                    }
+                
+                // Battle Mode
+                HStack(spacing: 12) {
+                    Button("⚔️ Battle Window") {
+                        openWindow(id: "BattleWindow")
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.orange)
+                    
+                    Toggle("🏟️ AR Battle", isOn: $isBattleArena)
+                        .toggleStyle(.button)
+                        .onChange(of: isBattleArena) { _, newValue in
+                            Task {
+                                if newValue {
+                                    if isImmersive { isImmersive = false; await dismissImmersiveSpace() }
+                                    if isEffectMode { isEffectMode = false; await dismissImmersiveSpace() }
+                                    await openImmersiveSpace(id: "BattleArena")
+                                } else {
+                                    await dismissImmersiveSpace()
+                                }
+                            }
+                        }
+                }
+                
+                // Emotion Monster AR
+                Toggle("🐱 Emotion Monster", isOn: $isEmotionMonster)
+                    .toggleStyle(.button)
+                    .onChange(of: isEmotionMonster) { _, newValue in
+                        Task {
+                            if newValue {
+                                if isImmersive { isImmersive = false; await dismissImmersiveSpace() }
+                                if isEffectMode { isEffectMode = false; await dismissImmersiveSpace() }
+                                if isBattleArena { isBattleArena = false; await dismissImmersiveSpace() }
+                                await openImmersiveSpace(id: "EmotionMonster")
                             } else {
                                 await dismissImmersiveSpace()
                             }
