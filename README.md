@@ -1,216 +1,108 @@
-# Vision PAL 🐾👓 — "Umwelt"
+# Vision PAL 🐾👁️
 
-**AIロボットは人間の夢を見るか？**
+**AI の環世界（Umwelt）をリアルタイムで体験する** — JetBot ロボットが見て、感じて、記憶して、語る。
 
-AIの環世界をARで可視化するアートインスタレーション。
+## 概要
 
-パル（AI）の認知世界を覗く。物体認識、感情、記憶が混ざり合い、StreamDiffusionでリアルタイムに映像化される。人間とは異なる知覚、確率的な世界認識、記憶から染み出す過去の風景。
+Vision PAL は、JetBot（Jetson Nano）に搭載されたカメラ映像を VLM（Vision Language Model）で解析し、感情・記憶・独白を自律的に生成するシステムです。Apple Vision Pro と組み合わせて、AI の内面世界を AR で可視化するインスタレーション作品としても機能します。
 
-> Vision Pro + JetBot + Cognition Engine + StreamDiffusion
-
-## Architecture
+## パイプライン
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                       Local Network                           │
-│                                                               │
-│  ┌─────────────────────────────┐                              │
-│  │      Vision Pro              │                              │
-│  │  📺 MJPEGView (リアル映像)   │◄── MJPEG :8554 ─────────┐   │
-│  │  🎨 UmweltView (認知映像)    │◄── MJPEG :8555 ──────┐  │   │
-│  │  ✨ AffectOverlay (感情AR)   │◄── MQTT ───────────┐  │  │   │
-│  │  🎯 HeadTracking → MQTT     │──┐                  │  │  │   │
-│  │  🎤 VoiceStyle → HTTP       │──┼──┐               │  │  │   │
-│  └─────────────────────────────┘  │  │               │  │  │   │
-│                                    │  │               │  │  │   │
-│  ┌─────────────────────────────┐  │  │               │  │  │   │
-│  │  Jetson Nano (Host)         │  │  │               │  │  │   │
-│  │  🧠 Cognition Engine ──────────┼──┼── MQTT pub ───┘  │  │   │
-│  │     perception → affect     │  │  │                   │  │   │
-│  │     → memory → prompt       │  │  │                   │  │   │
-│  │     → TTS monologue 🔊     │  │  │                   │  │   │
-│  │  📡 Mosquitto MQTT :1883 ◄──┘  │                   │  │   │
-│  └─────────────────────────────┘     │                   │  │   │
-│    192.168.3.5                       │                   │  │   │
-│                                      │                   │  │   │
-│  ┌─────────────────────────────┐     │                   │  │   │
-│  │  PC (GTX 2080 Ti)           │     │                   │  │   │
-│  │  🎨 StreamDiffusion :8555  │◄────┘                   │──┘   │
-│  │     MJPEG in + prompt in    │◄── MQTT sub ────────────┘     │
-│  │     → AI映像 out            │                              │
-│  └─────────────────────────────┘                              │
-│                                                               │
-│  ┌─────────────────────────────┐                              │
-│  │  JetBot                      │                              │
-│  │  📷 MJPEG Camera :8554      │─────────────────────────────┘
-│  │  🤖 MQTT Motor Control      │◄── MQTT sub
-│  │  💥 Collision Detection      │── MQTT pub
-│  └─────────────────────────────┘
-│    192.168.3.8
-└──────────────────────────────────────────────────────────────┘
+JetBot カメラ → MJPEG配信 → Gemini VLM → MQTT → Cognition Engine → TTS → スピーカー
+  (USB)        (8554)     (cloud API)   (broker)  (感情/記憶/独白)  (ElevenLabs)  (JetBot USB)
 ```
 
-## Cognition Engine — パルの心
+### コンポーネント
 
-2秒サイクルで動く認知ループ。パルの**リアルな内部状態**がそのまま映像とモノローグになる。
+| コンポーネント | 場所 | 役割 |
+|---|---|---|
+| `mjpeg_server.py` | JetBot | USB カメラ → MJPEG 配信 (port 8554) |
+| `vlm_watcher.py` | Jetson/コンテナ | MJPEG スナップ → Gemini flash-lite → MQTT publish |
+| `cognitive_loop.py` | コンテナ | MQTT subscribe → 感情遷移 → 独白生成 → TTS → スピーカー再生 |
+| `config.py` | - | MQTT トピック・ブローカー設定 |
+| `affect.py` | - | 感情エンジン（valence/arousal モデル） |
+| `perception.py` | - | 知覚データ管理 |
+| `prompt_builder.py` | - | 独白プロンプト生成（VLM シーン情報統合） |
+| `memory_recall.py` | - | 短期記憶・記憶強度管理 |
+| `mqtt_robot.py` | JetBot | MQTT → モーター制御 |
 
-```
-知覚 → 感情 → 記憶 → プロンプト → 映像 + 声
-```
+### オプション（展示用）
 
-| モジュール | 役割 |
-|-----------|------|
-| `perception.py` | MQTT経由で物体認識データ受信 |
-| `affect.py` | 8感情（好奇心/不安/喜び/驚き/退屈/怒り/悲しみ/平穏）を算出 |
-| `memory_recall.py` | OpenClaw APIでセマンティック記憶検索（Gemini embedding + BM25） |
-| `prompt_builder.py` | 感情→色彩・ムード + SD用プロンプト + 日本語モノローグ生成 |
-| `cognitive_loop.py` | 2秒サイクルのオーケストレーター |
-| `config.py` | MQTT・カメラ・DNN・感情マッピング設定 |
+| コンポーネント | 場所 | 役割 |
+|---|---|---|
+| `VisionPAL/` | Vision Pro | Swift/RealityKit アプリ（AR 表示 + MQTT 操縦） |
+| `server.py` | PC | StreamDiffusion サーバー（認知映像変換） |
+| `sharp_server.py` | PC | SHARP 3DGS 生成サーバー |
 
-### 感情 → ビジュアルスタイル
+## セットアップ
 
-| 感情 | 色彩 | ムード |
-|------|------|--------|
-| 🌟 curious | ゴールド・琥珀 | 暖かく輝く探索の光 |
-| 😰 anxious | ダークパープル・ノイズ | 歪んだ不安定な空間 |
-| 😊 happy | パステルピンク・虹色 | 柔らかく溢れる幸福感 |
-| 😲 surprised | 白い閃光・ブルー | 鋭い一瞬の衝撃 |
-| 😑 bored | グレー・セピア | 色褪せた平坦な世界 |
-| 😡 frustrated | 赤・オレンジ | 燃える不満 |
-| 😢 sad | 青・雨 | 滲む寂しさ |
-| 🧘 calm | 薄い水色・白 | 穏やかな静寂 |
+### 必要環境
 
-## MQTT Topics
+- **JetBot**: Jetson Nano 4GB, USB カメラ, USB スピーカー
+- **Jetson ホスト**: Mosquitto MQTT ブローカー, OpenClaw
+- **クラウド API**: Gemini API キー, ElevenLabs API キー（TTS 用）
 
-```
-vision_pal/
-├── move                    # 操縦コマンド (Vision Pro → JetBot)
-├── status                  # JetBotステータス
-├── perception/objects      # 物体認識データ
-├── perception/collision    # 衝突検知
-├── affect/state            # 感情状態 (JSON)
-├── memory/recall           # 記憶検索結果
-├── prompt/current          # StreamDiffusion用プロンプト
-├── monologue               # パルの独り言テキスト
-└── umwelt/state            # 統合認知状態
-```
-
-## Setup
-
-### 1. Mosquitto (Jetson Host)
+### 環境変数
 
 ```bash
-sudo systemctl start mosquitto
+# vlm_watcher.py
+GEMINI_API_KEY=...          # または ~/.openclaw/openclaw.json から自動読み込み
+
+# cognitive_loop.py
+OPENCLAW_API_URL=http://127.0.0.1:18789
+OPENCLAW_GATEWAY_TOKEN=...  # OpenClaw ゲートウェイトークン
+OPENCLAW_SESSION_KEY=main
+PAL_TTS_METHOD=openclaw     # "openclaw" (ElevenLabs) or "local" (Open JTalk)
 ```
 
-### 2. JetBot
+> ⚠️ **API キーやトークンをソースコードにハードコードしないこと。** 環境変数または OpenClaw config 経由で管理する。
+
+### 起動
 
 ```bash
-ssh jetbot@192.168.3.8
-python3 mqtt_robot.py &
-python3 mjpeg_light.py &    # MJPEG :8554
+# 1. JetBot: MJPEG 配信
+ssh jetbot@<JETBOT_IP> "python3 ~/mjpeg_server.py --usb"
+
+# 2. VLM Watcher（5秒間隔）
+PYTHONUNBUFFERED=1 python3 vision_pal/Cognition/vlm_watcher.py --interval 5
+
+# 3. Cognition Engine（独白クールダウン10秒）
+PYTHONUNBUFFERED=1 python3 vision_pal/Cognition/cognitive_loop.py --monologue-cooldown 10
 ```
 
-### 3. Cognition Engine (Jetson Container / OpenClaw)
+### MQTT トピック
 
-```bash
-cd Cognition
-OPENCLAW_GATEWAY_TOKEN="$TOKEN" .venv/bin/python3 cognitive_loop.py --interval 2
-```
+| トピック | 方向 | 内容 |
+|---|---|---|
+| `vision_pal/perception/scene` | vlm_watcher → cognitive_loop | VLM シーン解析結果 (JSON) |
+| `vision_pal/perception/collision` | mjpeg_perception → cognitive_loop | 衝突検知 |
+| `vision_pal/perception/objects` | cognitive_loop → | 知覚オブジェクト |
+| `vision_pal/monologue` | cognitive_loop → | 生成された独白 |
+| `vision_pal/control` | Vision Pro → mqtt_robot | モーター操縦コマンド |
 
-### 4. StreamDiffusion (PC — GTX 2080 Ti)
+## アーキテクチャ詳細
 
-```bash
-cd StreamDiffusion
-python -m venv .venv
-source .venv/bin/activate
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
-pip install streamdiffusion[tensorrt]
-python -m streamdiffusion.tools.install-tensorrt
-python server.py --jetbot http://192.168.3.8:8554/raw
-```
+→ [ARCHITECTURE.md](ARCHITECTURE.md)
 
-### 5. Vision Pro
+## 展示コンセプト
 
-```bash
-cd VisionPro
-open VisionPAL.xcodeproj   # Xcode 15+, visionOS SDK
-```
+→ [EXHIBITION_CONCEPT.md](EXHIBITION_CONCEPT.md)
 
-## Voice Style Presets
+## コスト目安（1時間稼働）
 
-Vision Proの音声認識で切り替え:
+| 項目 | コスト |
+|---|---|
+| Gemini VLM (flash-lite) | ~$0.04（≈6円） |
+| ElevenLabs TTS | 月間枠の ~3% |
+| 独白生成 (Claude) | ~$0.02 |
+| **合計** | **~$0.21（≈30円）** |
 
-| Name | Keyword | Prompt |
-|------|---------|--------|
-| 🌿 Ghibli | ジブリ | anime style, studio ghibli, warm colors |
-| 🌃 Cyberpunk | サイバーパンク | cyberpunk neon city, glowing lights |
-| 💧 Watercolor | 水彩 | watercolor painting, soft colors |
-| ✏️ Sketch | スケッチ | pencil sketch, black and white |
-| 🖌️ Oil Paint | 油絵 | oil painting, impressionist |
-| 👾 Pixel Art | ピクセル | pixel art, retro game, 16-bit |
-| 🏯 Ukiyo-e | 浮世絵 | ukiyo-e, japanese woodblock print |
-| 🌸 Pastel | パステル | pastel colors, soft dreamy illustration |
+## ライセンス
 
-> 💡 Umweltモードではパルの感情が自動でスタイルを決定。音声スタイルはマニュアルモード用。
+MIT
 
-## Tech Stack
+## 作者
 
-| Component | Technology |
-|-----------|-----------|
-| Vision Pro | Swift, SwiftUI, RealityKit, ARKit, CocoaMQTT, Speech Framework |
-| Cognition | Python 3.12, paho-mqtt 2.1, OpenClaw API (memory search) |
-| StreamDiffusion | Python, PyTorch, CUDA, TensorRT, Flask |
-| JetBot | Python 3.6, OpenCV, GStreamer, Adafruit MotorHAT, paho-mqtt |
-| Jetson Host | Mosquitto, OpenClaw (Docker), ElevenLabs TTS |
-| Network | MQTT (制御+認知), MJPEG (映像), HTTP (スタイル変更) |
-
-## Project Structure
-
-```
-VisionPAL/
-├── README.md                    # This file
-├── ARCHITECTURE.md              # 詳細アーキテクチャ
-├── EXHIBITION_CONCEPT.md        # 展示コンセプト
-│
-├── Cognition/                   # 🧠 認知エンジン (Jetson Container)
-│   ├── config.py                #   設定
-│   ├── perception.py            #   知覚モジュール
-│   ├── affect.py                #   感情モジュール
-│   ├── memory_recall.py         #   記憶検索
-│   ├── prompt_builder.py        #   プロンプト生成
-│   ├── cognitive_loop.py        #   メインループ
-│   └── .venv/                   #   Python venv (paho-mqtt)
-│
-├── JetBot/                      # 🤖 JetBotスクリプト
-│   ├── mqtt_robot.py            #   MQTT操縦
-│   ├── mjpeg_light.py           #   カメラMJPEG配信
-│   ├── jetbot_control.py        #   モーター制御
-│   └── collision_detect.py      #   衝突検知
-│
-├── StreamDiffusion/             # 🎨 AI映像変換 (PC)
-│   └── server.py                #   StreamDiffusion API
-│
-└── VisionPro/                   # 👓 Vision Proアプリ
-    ├── README.md                #   ビルド手順
-    ├── VisionPAL.xcodeproj/
-    └── VisionPAL/
-        ├── VisionPALApp.swift
-        ├── ContentView.swift
-        ├── MJPEGView.swift
-        ├── RobotController.swift
-        ├── VoiceStyleController.swift
-        ├── ImmersiveControlView.swift
-        └── CurvedScreenView.swift
-```
-
-## Development Status
-
-- [x] **Phase 1**: Cognition Engine — 知覚・感情・記憶・プロンプト生成 + TTS
-- [ ] **Phase 2**: StreamDiffusion連携 — img2img + プロンプト受信
-- [ ] **Phase 3**: Vision Pro Umwelt UI — 認知映像 + 感情ARオーバーレイ
-- [ ] **Phase 4**: 展示仕上げ — 自律走行、再起動演出、観客検知
-
-## License
-
-Private project.
+- **haltyt** — <https://github.com/haltyt>
+- **パル** 🐾 — AI 相棒

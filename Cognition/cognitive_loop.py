@@ -38,14 +38,23 @@ class CognitiveLoop:
         self.mqtt_client = None
         self.mqtt_connected = False
 
+        # VLMシーンデータ（vlm_watcher.pyから受信）
+        self.scene_data = {}
+        self._scene_lock = threading.Lock()
+
         # 状態
         self.running = False
         self.cycle_count = 0
         self.last_monologue = ""
         self.last_monologue_time = 0
         self.monologue_cooldown = 30  # 独白の最小間隔（秒）
+        self.monologue_history = []  # 直近の独白履歴（重複防止）
         self.last_emotion = ""
         self.tts_lock = threading.Lock()
+
+        # Discord通知
+        self.discord_enabled = True
+        self.discord_target = "user:390759448148443136"  # haltyt
 
         # TTS設定
         self.tts_enabled = True
@@ -66,7 +75,10 @@ class CognitiveLoop:
         broker = cfg.MQTT_BROKER
         port = cfg.MQTT_PORT
 
-        self.mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, "cognition_engine")
+        try:
+            self.mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, "cognition_engine")
+        except (AttributeError, TypeError):
+            self.mqtt_client = mqtt.Client("cognition_engine")
         self.mqtt_client.on_connect = self._on_connect
         self.mqtt_client.on_disconnect = self._on_disconnect
 
@@ -77,22 +89,45 @@ class CognitiveLoop:
         except Exception as e:
             print("[CogLoop] MQTT connection failed: {}".format(e))
 
-    def _on_connect(self, client, userdata, flags, reason_code, properties=None):
-        if reason_code == 0 or str(reason_code) == "Success":
-            self.mqtt_connected = True
-            print("[CogLoop] MQTT connected!")
-            # 知覚データと衝突データを購読
-            client.subscribe(self.perception.topic)
-            client.subscribe(cfg.TOPIC_COLLISION)
-            client.message_callback_add(self.perception.topic, self._on_perception)
-            client.message_callback_add(cfg.TOPIC_COLLISION, self._on_collision)
-            print("[CogLoop] Subscribed: {}, {}".format(self.perception.topic, cfg.TOPIC_COLLISION))
-        else:
-            print("[CogLoop] MQTT connect failed, rc={}".format(reason_code))
+    def _on_connect(self, *args):
+        # paho v1: (client, userdata, flags, rc) / v2: (client, userdata, flags, rc, properties)
+        client = args[0] if args else self.mqtt_client
+        self.mqtt_connected = True
+        print("[CogLoop] MQTT connected!")
+        client.subscribe(self.perception.topic)
+        client.subscribe(cfg.TOPIC_COLLISION)
+        client.subscribe(cfg.TOPIC_SCENE)
+        client.message_callback_add(self.perception.topic, self._on_perception)
+        client.message_callback_add(cfg.TOPIC_COLLISION, self._on_collision)
+        client.message_callback_add(cfg.TOPIC_SCENE, self._on_scene)
+        print("[CogLoop] Subscribed: {}, {}, {}".format(
+            self.perception.topic, cfg.TOPIC_COLLISION, cfg.TOPIC_SCENE))
 
     def _on_perception(self, client, userdata, msg):
         """知覚データ受信"""
         self.perception.on_mqtt_message(msg.payload)
+
+    def _on_scene(self, client, userdata, msg):
+        """VLMシーンデータ受信（vlm_watcher.pyから）"""
+        try:
+            data = json.loads(msg.payload)
+            prev_people = self.scene_data.get("people", 0) if self.scene_data else 0
+            with self._scene_lock:
+                self.scene_data = data
+            summary = data.get("summary", "")[:50]
+            people = data.get("people", 0)
+            latency = data.get("latency_ms", 0)
+            print("[CogLoop] 👁️ Scene: people={} | {}".format(people, summary))
+            # 人の出入りがあった時だけDiscord通知
+            if people != prev_people:
+                if people > prev_people:
+                    self.notify_discord("👁️ **人を検出！** ({}名) | {} | VLM: {}ms".format(
+                        people, summary, latency))
+                else:
+                    self.notify_discord("👁️ **人がいなくなった** | {} | VLM: {}ms".format(
+                        summary, latency))
+        except Exception as e:
+            print("[CogLoop] Scene parse error: {}".format(e))
 
     def _on_collision(self, client, userdata, msg):
         """衝突データ受信"""
@@ -104,9 +139,9 @@ class CognitiveLoop:
         except Exception:
             pass
 
-    def _on_disconnect(self, client, userdata, flags, reason_code, properties=None):
+    def _on_disconnect(self, *args):
         self.mqtt_connected = False
-        print("[CogLoop] MQTT disconnected, rc={}".format(reason_code))
+        print("[CogLoop] MQTT disconnected")
 
     def publish(self, topic, data):
         """MQTTでデータをpublish"""
@@ -116,6 +151,31 @@ class CognitiveLoop:
         else:
             # MQTT未接続時はログ出力のみ
             pass
+
+    def notify_discord(self, text):
+        """Discordにデバッグ情報を送信"""
+        if not self.discord_enabled:
+            return
+        try:
+            import urllib.request as _urlreq
+            url = "{}/tools/invoke".format(self.memory.api_url)
+            body = json.dumps({
+                "tool": "message",
+                "args": {
+                    "action": "send",
+                    "channel": "discord",
+                    "target": self.discord_target,
+                    "message": text,
+                },
+                "sessionKey": "main",
+            }).encode("utf-8")
+            req = _urlreq.Request(url, body, {
+                "Content-Type": "application/json",
+                "Authorization": "Bearer {}".format(self.memory.api_token),
+            })
+            _urlreq.urlopen(req, timeout=10)
+        except Exception as e:
+            print("[Discord] Send failed: {}".format(e))
 
     def speak(self, text):
         """パルの独白をTTSで喋る（非同期）"""
@@ -129,13 +189,18 @@ class CognitiveLoop:
         if elapsed < self.monologue_cooldown:
             print("[TTS] cooldown ({:.0f}s < {:.0f}s)".format(elapsed, self.monologue_cooldown))
             return
-        # 同じセリフは繰り返さない
-        if text == self.last_monologue:
-            print("[TTS] same text, skip")
-            return
+        # 最近のセリフと似すぎたらスキップ（先頭20文字で比較）
+        text_key = text[:20]
+        for prev in self.monologue_history[-5:]:
+            if prev[:20] == text_key:
+                print("[TTS] similar to recent, skip")
+                return
 
         self.last_monologue = text
         self.last_monologue_time = now
+        self.monologue_history.append(text)
+        if len(self.monologue_history) > 10:
+            self.monologue_history.pop(0)
 
         print("[TTS] speaking: {}".format(text[:50]))
         # 非同期でTTS実行
@@ -211,10 +276,43 @@ class CognitiveLoop:
             print("[TTS] Local speak failed: {}".format(e))
 
     def _play_on_jetson(self, media_path):
-        """生成された音声ファイルをJetsonスピーカーで再生"""
+        """生成された音声ファイルをスピーカーで再生（JetBot USBスピーカー優先、Jetson BTフォールバック）"""
         try:
+            # JetBot USBスピーカーで再生を試みる
+            jetbot_host = "192.168.3.8"
+            jetbot_user = "jetbot"
             remote_path = "/tmp/pal_cognitive_tts.mp3"
-            print("[TTS] scp {} -> jetson".format(media_path), flush=True)
+
+            print("[TTS] scp {} -> jetbot".format(media_path), flush=True)
+            r1 = subprocess.run(
+                ["scp", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=3",
+                 media_path,
+                 "{}@{}:{}".format(jetbot_user, jetbot_host, remote_path)],
+                timeout=10,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            if r1.returncode == 0:
+                print("[TTS] playing on jetbot USB speaker...", flush=True)
+                play_cmd = (
+                    "amixer -c 3 set PCM 50% 2>/dev/null; "
+                    "ffmpeg -y -i '{}' -ar 44100 -ac 1 /tmp/pal_tts.wav 2>/dev/null && "
+                    "aplay -D plughw:3,0 /tmp/pal_tts.wav"
+                ).format(remote_path)
+                r2 = subprocess.run(
+                    ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=3",
+                     "{}@{}".format(jetbot_user, jetbot_host),
+                     play_cmd],
+                    timeout=30,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                print("[TTS] jetbot play rc={}".format(r2.returncode), flush=True)
+                if r2.returncode == 0:
+                    return  # 成功
+
+            # フォールバック: Jetson BTスピーカー
+            print("[TTS] jetbot failed, trying jetson BT...", flush=True)
             r1 = subprocess.run(
                 ["scp", "-o", "StrictHostKeyChecking=no",
                  media_path,
@@ -223,16 +321,13 @@ class CognitiveLoop:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
-            print("[TTS] scp rc={}".format(r1.returncode), flush=True)
             if r1.returncode != 0:
-                print("[TTS] scp stderr: {}".format(r1.stderr.decode()), flush=True)
+                print("[TTS] scp to jetson failed", flush=True)
                 return
-            # Jetsonで再生（BT再接続付き）
-            print("[TTS] playing on jetson...", flush=True)
             play_cmd = (
                 "pactl set-default-sink bluez_sink.AC_9B_0A_AA_B8_F6.a2dp_sink 2>/dev/null || "
                 "(echo -e 'connect AC:9B:0A:AA:B8:F6\\nquit' | sudo bluetoothctl > /dev/null 2>&1 && sleep 3 && "
-                "pactl set-default-sink bluez_sink.AC_9B_0A_AA_B8_F6.a2dp_sink 2>/dev/null); "
+                "pactl set-default-sink bluez_sink.AC_9B_0A_AA:B8:F6.a2dp_sink 2>/dev/null); "
                 "ffmpeg -y -i '{}' -f wav - 2>/dev/null | paplay --device=bluez_sink.AC_9B_0A_AA_B8_F6.a2dp_sink"
             ).format(remote_path)
             r2 = subprocess.run(
@@ -243,16 +338,30 @@ class CognitiveLoop:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
-            print("[TTS] play rc={} stderr={}".format(r2.returncode, r2.stderr.decode()[:200]), flush=True)
+            print("[TTS] jetson play rc={}".format(r2.returncode), flush=True)
         except Exception as e:
-            print("[TTS] Play on Jetson failed: {}".format(e), flush=True)
+            print("[TTS] Play failed: {}".format(e), flush=True)
 
     def run_cycle(self):
         """1サイクル実行: 知覚→感情→記憶→プロンプト→出力"""
         t0 = time.time()
 
-        # 1. 知覚: カメラから物体検出
+        # 1. 知覚: カメラから物体検出 + VLMシーン
         perception_data = self.perception.get_perception_data()
+        with self._scene_lock:
+            if self.scene_data:
+                perception_data["vlm_scene"] = self.scene_data.get("summary", "")
+                perception_data["vlm_obstacles"] = self.scene_data.get("obstacles", [])
+                perception_data["vlm_people"] = self.scene_data.get("people", 0)
+                # VLMで人を検出したらhas_personを更新
+                if self.scene_data.get("people", 0) > 0:
+                    perception_data["has_person"] = True
+                # sceneがあればobject_countを更新
+                vlm_obs = self.scene_data.get("obstacles", [])
+                if vlm_obs:
+                    perception_data["object_count"] = max(
+                        perception_data.get("object_count", 0), len(vlm_obs)
+                    )
 
         # 2. 感情: 知覚データから感情を計算
         motor_state = {"moving": False, "direction": "stop"}  # TODO: MQTT経由で取得
@@ -300,16 +409,78 @@ class CognitiveLoop:
         self.last_emotion = current_emotion
 
         time_since = time.time() - self.last_monologue_time
-        should_speak = monologue and (emotion_changed or time_since > 60)
+        # VLMシーンに変化があるかチェック
+        vlm_changed = False
+        with self._scene_lock:
+            new_changes = self.scene_data.get("changes", "")
+            if new_changes and "変化なし" not in new_changes and "ありません" not in new_changes:
+                vlm_changed = True
+        should_speak = monologue and (emotion_changed or vlm_changed)
+
+        # Discord通知用の共通データ
+        vlm_scene = perception_data.get("vlm_scene", "")
+        vlm_obs = perception_data.get("vlm_obstacles", [])
+        vlm_ppl = perception_data.get("vlm_people", 0)
+        mem_str = memory_data.get("memory_strength", 0)
+
         if should_speak:
             print("[Mono] trigger: emotion_changed={} time_since={:.0f}s".format(emotion_changed, time_since))
             self.speak(monologue)
+            self.last_monologue_time = time.time()
             # MQTTにも独白をpublish
             self.publish("vision_pal/monologue", {
                 "text": monologue,
                 "emotion": affect_data.get("emotion"),
                 "timestamp": time.time(),
             })
+            # Discord通知
+            debug_msg = (
+                "🤖 **Cognition #{cycle}**\n"
+                "👁️ VLM: {scene}\n"
+                "🚧 障害物: {obs}\n"
+                "👤 人: {ppl}\n"
+                "💭 感情: **{emo}** (v:{val:.2f} a:{aro:.2f})\n"
+                "📚 記憶強度: {mem:.3f}\n"
+                "💬 独白: {mono}\n"
+                "🔊 TTS: 再生中..."
+            ).format(
+                cycle=self.cycle_count,
+                scene=vlm_scene[:60] if vlm_scene else "なし",
+                obs=", ".join(vlm_obs[:4]) if vlm_obs else "なし",
+                ppl=vlm_ppl,
+                emo=current_emotion,
+                val=affect_data.get("valence", 0),
+                aro=affect_data.get("arousal", 0),
+                mem=mem_str,
+                mono=monologue[:80],
+            )
+            self.notify_discord(debug_msg)
+        else:
+            # スキップ理由を判定
+            reasons = []
+            if not monologue:
+                reasons.append("独白なし")
+            if not emotion_changed:
+                reasons.append("感情変化なし")
+            if not vlm_changed:
+                reasons.append("シーン変化なし")
+            skip_reason = ", ".join(reasons)
+
+            # スキップもDiscord通知（10サイクルごと or 最初5回）
+            if self.cycle_count <= 5 or self.cycle_count % 10 == 0:
+                debug_msg = (
+                    "⏭️ **Skip #{cycle}**\n"
+                    "👁️ VLM: {scene}\n"
+                    "👤 人: {ppl} | 💭 感情: **{emo}**\n"
+                    "⏩ スキップ理由: {reason}"
+                ).format(
+                    cycle=self.cycle_count,
+                    scene=vlm_scene[:60] if vlm_scene else "なし",
+                    ppl=vlm_ppl,
+                    emo=current_emotion,
+                    reason=skip_reason,
+                )
+                self.notify_discord(debug_msg)
 
         elapsed = time.time() - t0
         self.cycle_count += 1

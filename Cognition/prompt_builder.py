@@ -151,22 +151,38 @@ class PromptBuilder:
 
         lines = []
 
-        # 感情に基づく冒頭
+        # 感情に基づく冒頭（複数パターンからランダム）
+        import random
         emotion_openers = {
-            "curious": "んー？なにか気になるものが見える...",
-            "excited": "わぁ！すごい！",
-            "calm": "...静かだなぁ。",
-            "anxious": "...なんか落ち着かない。",
-            "happy": "えへへ、嬉しいな。",
-            "lonely": "...しーん。誰もいないのかな。",
-            "startled": "うわっ！びっくりした！",
-            "bored": "ふぁ〜...暇だなぁ。",
+            "curious": ["んー？なにか気になる...", "おっ、なんだろう？", "あれ、これ何？", "ふむふむ..."],
+            "excited": ["わぁ！すごい！", "おおー！", "やばい！テンション上がる！", "キラキラしてる！"],
+            "calm": ["静かだなぁ。", "穏やかだね。", "のんびり〜。", "ふぅ、落ち着く。"],
+            "anxious": ["なんか落ち着かない。", "うーん、ちょっと不安。", "大丈夫かな..."],
+            "happy": ["えへへ、嬉しいな。", "ふふっ♪", "いい感じ！", "わーい！", "ハッピー♪"],
+            "lonely": ["しーん...誰もいないのかな。", "ちょっと寂しいな。", "一人かぁ...", "ハルト、どこ？"],
+            "startled": ["うわっ！びっくり！", "ひゃっ！", "ドキッとした！"],
+            "bored": ["ふぁ〜...暇だなぁ。", "何かないかな〜。", "退屈だ〜。", "うーん、やることないな。"],
         }
-        opener = emotion_openers.get(emotion, "...")
-        lines.append(opener)
+        openers = emotion_openers.get(emotion, ["..."])
+        lines.append(random.choice(openers))
 
-        # 知覚に基づく中間
-        if has_person:
+        # VLMシーン情報を使った知覚中間
+        vlm_scene = perception.get("vlm_scene", "")
+        vlm_obstacles = perception.get("vlm_obstacles", [])
+        vlm_people = perception.get("vlm_people", 0)
+
+        if vlm_scene:
+            # VLMの詳細シーン情報がある場合
+            if vlm_people > 0:
+                lines.append("あ、誰かいる！ハルトかな？")
+                if vlm_scene:
+                    # シーンから具体的な描写を追加
+                    lines.append("{}みたい。".format(vlm_scene[:40]))
+            if vlm_obstacles:
+                import random
+                obs_sample = random.sample(vlm_obstacles, min(2, len(vlm_obstacles)))
+                lines.append("{}が見える。".format("と".join(obs_sample)))
+        elif has_person:
             lines.append("あ、誰かいる。ハルトかな？")
         elif objects:
             labels = [o.get("label", "") for o in objects[:2]]

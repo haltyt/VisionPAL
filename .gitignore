@@ -6,3 +6,19 @@ DerivedData/
 .swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
 .netrc
 .claude/settings.local.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+
+# Environment / Secrets
+.env
+.env.*
+*.key
+credentials.json
+
+# Logs
+*.log
