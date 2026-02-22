@@ -466,35 +466,54 @@ struct BattleImmersiveView: View {
 
     // MARK: - USDZ Loading
 
-    private func tryLoadUSDZ() {
-        guard let monster = battle.monster else { return }
-        let type = monster.type.lowercased()
-
-        var usdzName: String?
+    /// Pick USDZ: match type → fallback to element color → default shadow_cat
+    private func pickUSDZ() -> String {
+        guard let monster = battle.monster else { return "shadow_cat" }
+        let type = monster.type
         for (key, value) in Self.usdzMap {
-            if type.contains(key) || monster.type == key {
-                usdzName = value
-                break
-            }
+            if type.contains(key) { return value }
         }
+        // Fallback by color association
+        let name = monster.name
+        if name.contains("火") || name.contains("炎") || name.contains("flame") { return "fire_cat" }
+        if name.contains("氷") || name.contains("雪") || name.contains("ice") { return "ice_cat" }
+        if name.contains("雷") || name.contains("thunder") { return "thunder_cat" }
+        // Default
+        return "shadow_cat"
+    }
 
-        guard let fileName = usdzName, fileName != loadedUSDZ else { return }
+    private func tryLoadUSDZ() {
+        guard battle.monster != nil else { return }
+        let fileName = pickUSDZ()
+        guard fileName != loadedUSDZ else { return }
+
+        // Try multiple naming patterns
+        let candidates = [fileName, "\(fileName).usdz"]
 
         Task {
-            do {
-                let entity = try await Entity(named: fileName)
-                await MainActor.run {
-                    monsterEntity?.removeFromParent()
-                    entity.position = SIMD3<Float>(0, -0.5, -2)
-                    entity.scale = SIMD3<Float>(repeating: 0.4)
-                    entity.generateCollisionShapes(recursive: true)
-                    entity.components.set(InputTargetComponent(allowedInputTypes: .all))
-                    anchorEntity?.addChild(entity)
-                    loadedUSDZ = fileName
-                    print("[BattleAR] Loaded USDZ: \(fileName)")
+            for candidate in candidates {
+                do {
+                    let entity = try await Entity(named: candidate)
+                    await MainActor.run {
+                        monsterEntity?.removeFromParent()
+                        glowEntity?.removeFromParent()
+                        entity.position = SIMD3<Float>(0, -0.5, -2)
+                        entity.scale = SIMD3<Float>(repeating: 0.4)
+                        entity.generateCollisionShapes(recursive: true)
+                        entity.components.set(InputTargetComponent(allowedInputTypes: .all))
+                        anchorEntity?.addChild(entity)
+                        loadedUSDZ = fileName
+                        print("[BattleAR] ✅ Loaded USDZ: \(candidate)")
+                    }
+                    return // Success
+                } catch {
+                    print("[BattleAR] ❌ Failed \(candidate): \(error.localizedDescription)")
                 }
-            } catch {
-                print("[BattleAR] USDZ \(fileName) not found, keeping sphere: \(error)")
+            }
+            // All failed — update sphere color at least
+            await MainActor.run {
+                print("[BattleAR] ⚠️ All USDZ load failed, keeping colored sphere")
+                updateMonster()
             }
         }
     }
