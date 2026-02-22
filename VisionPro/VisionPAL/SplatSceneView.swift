@@ -209,7 +209,7 @@ struct SplatSceneView: View {
                         var material = UnlitMaterial()
                         material.color = .init(tint: .init(
                             red: 0.4, green: 0.85, blue: 1.0,
-                            alpha: alpha
+                            alpha: CGFloat(alpha)
                         ))
                         model.materials = [material]
                         entity.components.set(model)
