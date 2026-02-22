@@ -3,9 +3,11 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject var robot: RobotController
     @EnvironmentObject var voiceStyle: VoiceStyleController
+    @EnvironmentObject var effectController: EmotionEffectController
     @Environment(\.openImmersiveSpace) var openImmersiveSpace
     @Environment(\.dismissImmersiveSpace) var dismissImmersiveSpace
     @State private var isImmersive = false
+    @State private var isEffectMode = false
     @State private var isCurvedMode = false
     @State private var currentCameraURL: URL?
     
@@ -72,12 +74,31 @@ struct ContentView: View {
                     .onChange(of: isImmersive) { _, newValue in
                         Task {
                             if newValue {
+                                if isEffectMode { isEffectMode = false; await dismissImmersiveSpace() }
                                 await openImmersiveSpace(id: "ImmersiveControl")
                             } else {
                                 await dismissImmersiveSpace()
                             }
                         }
                     }
+                
+                // Emotion Effect Mode
+                Toggle("✨ Emotion Effect", isOn: $isEffectMode)
+                    .toggleStyle(.button)
+                    .onChange(of: isEffectMode) { _, newValue in
+                        Task {
+                            if newValue {
+                                if isImmersive { isImmersive = false; await dismissImmersiveSpace() }
+                                await openImmersiveSpace(id: "EmotionEffect")
+                            } else {
+                                await dismissImmersiveSpace()
+                            }
+                        }
+                    }
+                
+                // Effect Status
+                EmotionEffectOverlay()
+                    .environmentObject(effectController)
             }
             
             // 右: ボイススタイルパネル
