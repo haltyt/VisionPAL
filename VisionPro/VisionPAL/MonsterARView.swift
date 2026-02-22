@@ -51,7 +51,13 @@ struct MonsterARView: View {
         Task {
             do {
                 // Load USDZ from app bundle
-                let entity = try await Entity(named: modelFile)
+                // Try with and without extension
+                let entity: Entity
+                do {
+                    entity = try await Entity(named: modelFile)
+                } catch {
+                    entity = try await Entity(named: "\(modelFile).usdz")
+                }
                 
                 // Position: 2m in front, slightly below eye level
                 entity.position = SIMD3<Float>(0, -0.5, -2.0)
