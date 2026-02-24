@@ -5,6 +5,8 @@ import MetalSplatter
 import SplatIO
 import ARKit
 import simd
+import UniformTypeIdentifiers
+import QuartzCore
 
 // MARK: - SplatDemoView (SwiftUI Entry Point)
 
@@ -43,9 +45,9 @@ struct SplatDemoView: View {
             .fileImporter(
                 isPresented: $isPickingFile,
                 allowedContentTypes: [
-                    .init(filenameExtension: "ply")!,
-                    .init(filenameExtension: "splat")!,
-                    .init(filenameExtension: "spz")!,
+                    UTType(filenameExtension: "ply") ?? .data,
+                    UTType(filenameExtension: "splat") ?? .data,
+                    UTType(filenameExtension: "spz") ?? .data,
                 ]
             ) {
                 isPickingFile = false
@@ -120,12 +122,24 @@ final class SplatDemoRenderer: @unchecked Sendable {
     private var rippleManager: RippleEffectManager?
     
     let inFlightSemaphore = DispatchSemaphore(value: 3)
-    
+
     private var rotation: Float = 0
     private var lastUpdateTime: TimeInterval = 0
-    
+
+    // Gesture state
+    private var modelScale: Float = 1.0
+    private var modelRotation: simd_quatf = simd_quatf(ix: 0, iy: 0, iz: 0, r: 1)
+    private var modelOffset: SIMD3<Float> = .zero
+
+    // Pinch tracking
+    private var lastSinglePinchPos: SIMD3<Float>?
+    private var lastTwoHandDistance: Float?
+    private var lastTwoHandMidpoint: SIMD3<Float>?
+    private var lastTwoHandDirection: SIMD3<Float>?
+
     let arSession = ARKitSession()
     let worldTracking = WorldTrackingProvider()
+    let handTracking = HandTrackingProvider()
     
     init(_ layerRenderer: LayerRenderer) {
         self.layerRenderer = layerRenderer
@@ -135,7 +149,7 @@ final class SplatDemoRenderer: @unchecked Sendable {
     
     static func startRendering(_ layerRenderer: LayerRenderer) {
         let renderer = SplatDemoRenderer(layerRenderer)
-        Task {
+        Task { @MainActor in
             do {
                 try await renderer.loadModel()
             } catch {
@@ -187,12 +201,12 @@ final class SplatDemoRenderer: @unchecked Sendable {
     }
     
     /// Create a simple procedural splat scene for testing without .ply
-    private func createProceduralSplats() -> [SplatIO.SplatScenePoint] {
-        var points: [SplatIO.SplatScenePoint] = []
+    private func createProceduralSplats() -> [SplatIO.SplatPoint] {
+        var points: [SplatIO.SplatPoint] = []
         let gridSize = 10
         let spacing: Float = 0.15
         let offset = Float(gridSize - 1) * spacing / 2
-        
+
         for x in 0..<gridSize {
             for y in 0..<gridSize {
                 for z in 0..<gridSize {
@@ -201,17 +215,19 @@ final class SplatDemoRenderer: @unchecked Sendable {
                         Float(y) * spacing - offset,
                         Float(z) * spacing - offset
                     )
-                    
-                    // Color based on position
-                    let r = Float(x) / Float(gridSize)
-                    let g = Float(y) / Float(gridSize)
-                    let b = Float(z) / Float(gridSize)
-                    
-                    var point = SplatIO.SplatScenePoint()
-                    point.position = position
-                    point.color = SIMD3<Float>(r, g, b)
-                    point.opacity = 0.8
-                    point.scale = SIMD3<Float>(repeating: 0.02)
+
+                    // Color based on position (convert to UInt8 0-255)
+                    let r = UInt8(Float(x) / Float(gridSize) * 255)
+                    let g = UInt8(Float(y) / Float(gridSize) * 255)
+                    let b = UInt8(Float(z) / Float(gridSize) * 255)
+
+                    let point = SplatIO.SplatPoint(
+                        position: position,
+                        color: .sRGBUInt8(SIMD3<UInt8>(r, g, b)),
+                        opacity: .linearFloat(0.8),
+                        scale: .linearFloat(SIMD3<Float>(repeating: 0.02)),
+                        rotation: simd_quatf(ix: 0, iy: 0, iz: 0, r: 1)
+                    )
                     points.append(point)
                 }
             }
@@ -219,18 +235,97 @@ final class SplatDemoRenderer: @unchecked Sendable {
         return points
     }
     
-    func startRenderLoop() {
+    nonisolated func startRenderLoop() {
         Task(executorPreference: RendererTaskExecutor.shared) {
             do {
-                try await arSession.run([worldTracking])
+                try await self.arSession.run([self.worldTracking, self.handTracking])
             } catch {
                 print("[SplatDemo] ARKit error: \(error)")
             }
-            renderLoop()
+            self.renderLoop()
+        }
+    }
+
+    // MARK: - Pinch Gesture Detection
+
+    private static let pinchThreshold: Float = 0.025  // 2.5cm
+
+    nonisolated private func pinchPosition(for hand: HandAnchor) -> SIMD3<Float>? {
+        guard hand.isTracked,
+              let thumbTip = hand.handSkeleton?.joint(.thumbTip),
+              let indexTip = hand.handSkeleton?.joint(.indexFingerTip),
+              thumbTip.isTracked, indexTip.isTracked else { return nil }
+
+        let thumbPos = (hand.originFromAnchorTransform * thumbTip.anchorFromJointTransform).columns.3
+        let indexPos = (hand.originFromAnchorTransform * indexTip.anchorFromJointTransform).columns.3
+
+        let thumb3 = SIMD3<Float>(thumbPos.x, thumbPos.y, thumbPos.z)
+        let index3 = SIMD3<Float>(indexPos.x, indexPos.y, indexPos.z)
+        let dist = simd_distance(thumb3, index3)
+
+        if dist < Self.pinchThreshold {
+            // Return midpoint between thumb and index as pinch position
+            return (thumb3 + index3) * 0.5
+        }
+        return nil
+    }
+
+    nonisolated private func processHandGestures() {
+        let leftAnchor = handTracking.latestAnchors.leftHand
+        let rightAnchor = handTracking.latestAnchors.rightHand
+
+        let leftPinch: SIMD3<Float>? = leftAnchor.flatMap { pinchPosition(for: $0) }
+        let rightPinch: SIMD3<Float>? = rightAnchor.flatMap { pinchPosition(for: $0) }
+
+        // Two-hand pinch → Rotate (tilt) + Scale (distance)
+        if let lp = leftPinch, let rp = rightPinch {
+            let currentDist = simd_distance(lp, rp)
+            let currentMid = (lp + rp) * 0.5
+            let currentDir = simd_normalize(rp - lp)
+
+            if let lastDist = lastTwoHandDistance,
+               let lastDir = lastTwoHandDirection {
+                // Scale: distance change
+                let ratio = currentDist / lastDist
+                modelScale *= ratio
+                modelScale = max(0.1, min(10.0, modelScale))
+
+                // Rotate: direction change between hands
+                let cross = simd_cross(lastDir, currentDir)
+                let dot = simd_dot(lastDir, currentDir)
+                let angle = atan2(simd_length(cross), dot)
+                if angle > 0.001 {
+                    let axis = simd_normalize(cross)
+                    let q = simd_quatf(angle: angle * 3.0, axis: axis)
+                    modelRotation = q * modelRotation
+                }
+            }
+
+            lastTwoHandDistance = currentDist
+            lastTwoHandMidpoint = currentMid
+            lastTwoHandDirection = currentDir
+            // Reset single-hand state
+            lastSinglePinchPos = nil
+            return
+        }
+        lastTwoHandDistance = nil
+        lastTwoHandMidpoint = nil
+        lastTwoHandDirection = nil
+
+        // Single-hand pinch → Move model
+        let singlePinch = leftPinch ?? rightPinch
+        if let pos = singlePinch {
+            if let lastPos = lastSinglePinchPos {
+                let delta = pos - lastPos
+                modelOffset += delta * 2.0
+            }
+            lastSinglePinchPos = pos
+        } else {
+            lastSinglePinchPos = nil
         }
     }
     
-    private func renderLoop() {
+    nonisolated private func renderLoop() {
         while true {
             switch layerRenderer.state {
             case .paused:
@@ -246,7 +341,7 @@ final class SplatDemoRenderer: @unchecked Sendable {
         }
     }
     
-    private func renderFrame() {
+    nonisolated private func renderFrame() {
         guard let frame = layerRenderer.queryNextFrame() else { return }
         
         frame.startUpdate()
@@ -278,14 +373,12 @@ final class SplatDemoRenderer: @unchecked Sendable {
         _ = inFlightSemaphore.wait(timeout: .distantFuture)
         
         frame.startSubmission()
-        
-        // Update rotation
+
         let now = CACurrentMediaTime()
-        if lastUpdateTime > 0 {
-            let dt = Float(now - lastUpdateTime)
-            rotation += dt * 0.12  // ~7 degrees/sec
-        }
         lastUpdateTime = now
+
+        // Process hand gestures for scale/rotation
+        processHandGestures()
         
         let primaryDrawable = drawables[0]
         let time = LayerRenderer.Clock.Instant.epoch
@@ -331,17 +424,26 @@ final class SplatDemoRenderer: @unchecked Sendable {
         frame.endSubmission()
     }
     
-    private func makeViewports(
+    nonisolated private func makeViewports(
         drawable: LayerRenderer.Drawable,
         deviceAnchor: DeviceAnchor?
-    ) -> [ModelRendererViewportDescriptor] {
-        let rotationMatrix = matrix4x4_rotation(radians: rotation, axis: SIMD3<Float>(0, 1, 0))
-        let translationMatrix = matrix4x4_translation(0, 0, -3)  // 3m in front
+    ) -> [SplatRenderer.ViewportDescriptor] {
+        // Base position: 3m in front
+        let baseTranslation = matrix4x4_translation(0, 0, -3)
+        // Hand drag offset
+        let offsetTranslation = matrix4x4_translation(modelOffset.x, modelOffset.y, modelOffset.z)
         // Flip upside-down splats (common in most .ply files)
         let flipMatrix = matrix4x4_rotation(radians: .pi, axis: SIMD3<Float>(0, 0, 1))
-        
+        // Hand gesture rotation & scale
+        let gestureRotationMatrix = simd_float4x4(modelRotation)
+        let s = modelScale
+        let scaleMatrix = simd_float4x4(diagonal: SIMD4<Float>(s, s, s, 1))
+
+        // Model transform: translate to position, then apply offset, scale, rotation, flip
+        let modelTransform = baseTranslation * offsetTranslation * scaleMatrix * gestureRotationMatrix * flipMatrix
+
         let simdDeviceAnchor = deviceAnchor?.originFromAnchorTransform ?? matrix_identity_float4x4
-        
+
         return drawable.views.enumerated().map { (index, view) in
             let viewMatrix = (simdDeviceAnchor * view.transform).inverse
             let projectionMatrix = drawable.computeProjection(viewIndex: index)
@@ -349,10 +451,10 @@ final class SplatDemoRenderer: @unchecked Sendable {
                 x: Int(view.textureMap.viewport.width),
                 y: Int(view.textureMap.viewport.height)
             )
-            return ModelRendererViewportDescriptor(
+            return SplatRenderer.ViewportDescriptor(
                 viewport: view.textureMap.viewport,
                 projectionMatrix: projectionMatrix,
-                viewMatrix: viewMatrix * translationMatrix * rotationMatrix * flipMatrix,
+                viewMatrix: viewMatrix * modelTransform,
                 screenSize: screenSize
             )
         }
@@ -383,15 +485,6 @@ func matrix4x4_translation(_ tx: Float, _ ty: Float, _ tz: Float) -> simd_float4
         SIMD4<Float>(0, 0, 1, 0),
         SIMD4<Float>(tx, ty, tz, 1)
     ))
-}
-
-// MARK: - ViewportDescriptor extension for MetalSplatter
-
-struct ModelRendererViewportDescriptor {
-    var viewport: MTLViewport
-    var projectionMatrix: simd_float4x4
-    var viewMatrix: simd_float4x4
-    var screenSize: SIMD2<Int>
 }
 
 // MARK: - RendererTaskExecutor (for render loop)

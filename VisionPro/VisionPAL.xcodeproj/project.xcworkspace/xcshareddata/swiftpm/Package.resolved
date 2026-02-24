@@ -1,5 +1,5 @@
 {
-  "originHash" : "033c7d1debf70e01b01ba9bff4eead99a00d0d297b6c2bbcda5c359c4feebdbe",
+  "originHash" : "c4110c0d5f9466e0917a3ca4a26259dc2d87a6d20f13b258f21d19e61e32db47",
   "pins" : [
     {
       "identity" : "cocoamqtt",
@@ -8,6 +8,15 @@
       "state" : {
         "revision" : "354938b60768d257b34e7e4451a33fd31148da6e",
         "version" : "2.0.9"
+      }
+    },
+    {
+      "identity" : "metalsplatter",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/scier/MetalSplatter",
+      "state" : {
+        "revision" : "71ff248e3016ac43c0a9271e322538421b28c360",
+        "version" : "1.0.1"
       }
     },
     {
@@ -20,12 +29,30 @@
       }
     },
     {
+      "identity" : "spz-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/scier/spz-swift.git",
+      "state" : {
+        "revision" : "e2410c91bceba2539c11157ad92e488ef6e16416",
+        "version" : "2.1.0"
+      }
+    },
+    {
       "identity" : "starscream",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/daltoniam/Starscream.git",
       "state" : {
         "revision" : "a063fda2b8145a231953c20e7a646be254365396",
         "version" : "3.1.2"
+      }
+    },
+    {
+      "identity" : "swift-argument-parser",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-argument-parser",
+      "state" : {
+        "revision" : "c5d11a805e765f52ba34ec7284bd4fcd6ba68615",
+        "version" : "1.7.0"
       }
     }
   ],

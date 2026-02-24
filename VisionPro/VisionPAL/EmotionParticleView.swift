@@ -110,7 +110,7 @@ struct EmotionParticleView: View {
         let mesh = MeshResource.generateSphere(radius: 5)
         var material = UnlitMaterial()
         material.color = .init(tint: .clear)
-        material.blending = .transparent(opacity: 0)
+        material.blending = .transparent(opacity: .init(scale: 0))
         
         let entity = ModelEntity(mesh: mesh, materials: [material])
         entity.name = "ambientSphere"
@@ -186,7 +186,7 @@ struct EmotionParticleView: View {
             material.color = .init(tint: .clear)
         }
         
-        material.blending = .transparent(opacity: .init(floatLiteral: Double(min(fogAlpha + 0.02, 0.2))))
+        material.blending = .transparent(opacity: .init(scale: min(Float(fogAlpha) + 0.02, 0.2)))
         entity.model?.materials = [material]
     }
 }

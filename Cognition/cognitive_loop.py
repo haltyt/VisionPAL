@@ -22,6 +22,8 @@ from affect import Affect
 from memory_recall import MemoryRecall
 from prompt_builder import PromptBuilder
 from effect_generator import EffectGenerator
+from survival_engine import SurvivalEngine
+from scene_memory import SceneMemory
 import config as cfg
 
 
@@ -52,6 +54,12 @@ class CognitiveLoop:
         self.monologue_history = []  # 直近の独白履歴（重複防止）
         self.last_emotion = ""
         self.tts_lock = threading.Lock()
+
+        # 生存エンジン（言語以前の身体層）
+        self.survival = SurvivalEngine()
+
+        # シーン記憶（場所の新規/既知判定）
+        self.scene_memory = SceneMemory()
 
         # エフェクト生成
         self.effect_gen = EffectGenerator(use_llm=True)
@@ -102,11 +110,16 @@ class CognitiveLoop:
         client.subscribe(self.perception.topic)
         client.subscribe(cfg.TOPIC_COLLISION)
         client.subscribe(cfg.TOPIC_SCENE)
+        client.subscribe(cfg.TOPIC_BODY)
+        client.subscribe(cfg.TOPIC_SURVIVAL_ACTION)
         client.message_callback_add(self.perception.topic, self._on_perception)
         client.message_callback_add(cfg.TOPIC_COLLISION, self._on_collision)
         client.message_callback_add(cfg.TOPIC_SCENE, self._on_scene)
-        print("[CogLoop] Subscribed: {}, {}, {}".format(
-            self.perception.topic, cfg.TOPIC_COLLISION, cfg.TOPIC_SCENE))
+        client.message_callback_add(cfg.TOPIC_BODY, self._on_body)
+        client.message_callback_add(cfg.TOPIC_SURVIVAL_ACTION, self._on_survival_action)
+        print("[CogLoop] Subscribed: {}, {}, {}, {}, {}".format(
+            self.perception.topic, cfg.TOPIC_COLLISION, cfg.TOPIC_SCENE,
+            cfg.TOPIC_BODY, cfg.TOPIC_SURVIVAL_ACTION))
 
     def _on_perception(self, client, userdata, msg):
         """知覚データ受信"""
@@ -133,6 +146,31 @@ class CognitiveLoop:
                         summary, latency))
         except Exception as e:
             print("[CogLoop] Scene parse error: {}".format(e))
+
+    def _on_body(self, client, userdata, msg):
+        """身体信号受信 → survival engineに転送"""
+        try:
+            data = json.loads(msg.payload)
+            self.survival._process_body(data)
+            with self.survival._lock:
+                self.survival.body_state = data
+        except Exception as e:
+            print("[CogLoop] Body parse error: {}".format(e))
+
+    def _on_survival_action(self, client, userdata, msg):
+        """生存エンジンからの自律行動通知"""
+        try:
+            data = json.loads(msg.payload)
+            action_type = data.get("type", "?")
+            desc = data.get("description", "")
+            urgency = data.get("urgency", 0)
+            print("[CogLoop] 🚨 Survival action: {} ({:.2f}) — {}".format(
+                action_type, urgency, desc))
+            # 自律行動をDiscordに通知
+            self.notify_discord("🚨 **身体の声** | {} | {} (緊急度:{:.0f}%)".format(
+                action_type, desc, urgency * 100))
+        except Exception as e:
+            print("[CogLoop] Survival action parse error: {}".format(e))
 
     def _on_collision(self, client, userdata, msg):
         """衝突データ受信"""
@@ -261,8 +299,21 @@ class CognitiveLoop:
         result_text = content[0].get("text", "")
         # "MEDIA: /path/to/file.mp3" 形式を期待
         if "MEDIA:" in result_text:
-            media_path = result_text.split("MEDIA:")[1].strip()
-            self._play_on_jetson(media_path)
+            container_path = result_text.split("MEDIA:")[1].strip()
+            # コンテナ内パス → docker cpでホストに取り出す
+            local_path = "/tmp/pal_cognitive_tts.mp3"
+            container_name = "openclaw-openclaw-gateway-1"
+            r = subprocess.run(
+                ["docker", "cp", "{}:{}".format(container_name, container_path), local_path],
+                timeout=10,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            if r.returncode == 0:
+                print("[TTS] docker cp OK: {}".format(local_path), flush=True)
+                self._play_on_jetson(local_path)
+            else:
+                print("[TTS] docker cp failed: {}".format(r.stderr.decode()), flush=True)
         else:
             print("[TTS] No MEDIA path in response")
 
@@ -316,29 +367,16 @@ class CognitiveLoop:
                 if r2.returncode == 0:
                     return  # 成功
 
-            # フォールバック: Jetson BTスピーカー
+            # フォールバック: Jetson BTスピーカー（ローカル実行）
             print("[TTS] jetbot failed, trying jetson BT...", flush=True)
-            r1 = subprocess.run(
-                ["scp", "-o", "StrictHostKeyChecking=no",
-                 media_path,
-                 "{}@{}:{}".format(self.jetson_user, self.jetson_host, remote_path)],
-                timeout=15,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-            if r1.returncode != 0:
-                print("[TTS] scp to jetson failed", flush=True)
-                return
             play_cmd = (
                 "pactl set-default-sink bluez_sink.AC_9B_0A_AA_B8_F6.a2dp_sink 2>/dev/null || "
                 "(echo -e 'connect AC:9B:0A:AA:B8:F6\\nquit' | sudo bluetoothctl > /dev/null 2>&1 && sleep 3 && "
-                "pactl set-default-sink bluez_sink.AC_9B_0A_AA:B8:F6.a2dp_sink 2>/dev/null); "
+                "pactl set-default-sink bluez_sink.AC_9B_0A_AA_B8_F6.a2dp_sink 2>/dev/null); "
                 "ffmpeg -y -i '{}' -f wav - 2>/dev/null | paplay --device=bluez_sink.AC_9B_0A_AA_B8_F6.a2dp_sink"
-            ).format(remote_path)
+            ).format(media_path)
             r2 = subprocess.run(
-                ["ssh", "-o", "StrictHostKeyChecking=no",
-                 "{}@{}".format(self.jetson_user, self.jetson_host),
-                 play_cmd],
+                ["bash", "-c", play_cmd],
                 timeout=30,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -368,17 +406,36 @@ class CognitiveLoop:
                         perception_data.get("object_count", 0), len(vlm_obs)
                     )
 
+        # 1.5. シーン記憶: 新規/既知判定
+        vlm_scene = perception_data.get("vlm_scene", "")
+        vlm_obs = perception_data.get("vlm_obstacles", [])
+        vlm_ppl = perception_data.get("vlm_people", 0)
+        scene_result = self.scene_memory.observe(vlm_scene, vlm_obs, vlm_ppl)
+        perception_data["scene_memory"] = scene_result
+
+        # シーン記憶がnovelty欲求に影響
+        if scene_result["novelty_delta"] > 0:
+            self.survival.drives["novelty"].satisfy(scene_result["novelty_delta"])
+        elif scene_result["novelty_delta"] < 0:
+            self.survival.drives["novelty"].frustrate(abs(scene_result["novelty_delta"]))
+
+        # 1.6. 生存エンジン: 身体信号→欲求→感情修飾
+        survival_state = self.survival.tick()
+        emotion_mods = self.survival.get_emotion_modifiers()
+
         # 2. 感情: 知覚データから感情を計算
         motor_state = {"moving": False, "direction": "stop"}  # TODO: MQTT経由で取得
         collision = False  # TODO: collision_detect連携
-        affect_data = self.affect.update(perception_data, motor_state, collision)
+        affect_data = self.affect.update(perception_data, motor_state, collision,
+                                          body_modifiers=emotion_mods)
 
         # 3. 記憶: セマンティック検索
         memory_data = self.memory.recall(perception_data, affect_data)
 
-        # 4. プロンプト生成
+        # 4. プロンプト生成（生存状態も渡す）
         prompt_data = self.prompt_builder.build(
-            perception_data, affect_data, memory_data
+            perception_data, affect_data, memory_data,
+            survival_state=survival_state
         )
 
         # 5. 出力
@@ -404,6 +461,9 @@ class CognitiveLoop:
             "objects": perception_data.get("objects", []),
             "has_person": perception_data.get("has_person"),
         })
+
+        # 生存状態をpublish
+        self.publish(cfg.TOPIC_SURVIVAL, survival_state)
 
         # 6. 独白（感情が変わった時 or 一定間隔）
         monologue = prompt_data.get("monologue", "")
@@ -450,7 +510,8 @@ class CognitiveLoop:
             new_changes = self.scene_data.get("changes", "")
             if new_changes and "変化なし" not in new_changes and "ありません" not in new_changes:
                 vlm_changed = True
-        should_speak = monologue and (emotion_changed or vlm_changed)
+        scene_is_new = scene_result.get("is_new", False)
+        should_speak = monologue and (emotion_changed or vlm_changed or scene_is_new)
 
         # Discord通知用の共通データ
         vlm_scene = perception_data.get("vlm_scene", "")

@@ -86,7 +86,7 @@ struct ContentView: View {
                             }
                         }
                     }
-                
+
                 // Battle Mode
                 HStack(spacing: 12) {
                     Button("⚔️ Battle Window") {
@@ -94,7 +94,7 @@ struct ContentView: View {
                     }
                     .buttonStyle(.bordered)
                     .tint(.orange)
-                    
+
                     Toggle("🏟️ AR Battle", isOn: $isBattleArena)
                         .toggleStyle(.button)
                         .onChange(of: isBattleArena) { _, newValue in
@@ -109,7 +109,7 @@ struct ContentView: View {
                             }
                         }
                 }
-                
+
                 // Emotion Monster AR
                 Toggle("🐱 Emotion Monster", isOn: $isEmotionMonster)
                     .toggleStyle(.button)
@@ -125,7 +125,7 @@ struct ContentView: View {
                             }
                         }
                     }
-                
+
                 // Emotion Effect Mode
                 Toggle("✨ Emotion Effect", isOn: $isEffectMode)
                     .toggleStyle(.button)
@@ -139,10 +139,17 @@ struct ContentView: View {
                             }
                         }
                     }
-                
+
                 // Effect Status
                 EmotionEffectOverlay()
                     .environmentObject(effectController)
+
+                // 3DGS Viewer
+                Button("🌐 3DGS Viewer") {
+                    openWindow(id: "SplatDemoWindow")
+                }
+                .buttonStyle(.bordered)
+                .tint(.cyan)
             }
             
             // 右: ボイススタイルパネル

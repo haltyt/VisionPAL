@@ -12,11 +12,12 @@ struct SplatDemoConfiguration: CompositorLayerConfiguration {
         // Enable foveation if available
         configuration.isFoveationEnabled =
             capabilities.supportsFoveation
-        
+
         // Use layered layout for stereo rendering
-        let supportedLayouts = capabilities.supportedLayouts(options: .default)
+        let options = LayerRenderer.Capabilities.SupportedLayoutsOptions()
+        let supportedLayouts = capabilities.supportedLayouts(options: options)
         configuration.layout = supportedLayouts.contains(.layered) ? .layered : .dedicated
-        
+
         // Color & depth formats
         configuration.colorFormat = .bgra8Unorm_srgb
         configuration.depthFormat = .depth32Float

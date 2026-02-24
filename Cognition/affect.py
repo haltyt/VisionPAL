@@ -23,8 +23,10 @@ class Affect:
         """外部から衝突イベントを通知"""
         self.collision_at = time.time()
 
-    def update(self, perception_data, motor_state="stopped", collision=False):
-        """知覚データとモーター状態から感情を更新"""
+    def update(self, perception_data, motor_state="stopped", collision=False, body_modifiers=None):
+        """知覚データとモーター状態から感情を更新
+        body_modifiers: survival_engineからの感情修飾 {emotion_name: modifier}
+        """
         now = time.time()
 
         has_person = perception_data.get("has_person", False)
@@ -94,11 +96,45 @@ class Affect:
         if len(self.history) > 10:
             self.history.pop(0)
 
+        # --- 身体からの感情修飾 ---
+        # survival_engineが「身体的にこう感じてる」という修飾を送ってくる
+        if body_modifiers:
+            # 各感情の「身体的圧力」を計算し、最も強い圧力が閾値を超えたら感情を上書き
+            body_pressure = {}
+            for emo_name, mod_value in body_modifiers.items():
+                if mod_value > 0 and emo_name in EMOTIONS:
+                    body_pressure[emo_name] = mod_value
+
+            if body_pressure:
+                strongest_body = max(body_pressure, key=body_pressure.get)
+                # 身体の圧力が0.4以上なら感情を上書き（身体は言語より強い）
+                if body_pressure[strongest_body] > 0.4:
+                    if strongest_body != self.current_emotion:
+                        print("[Affect] 🫀 body override: {} -> {} (pressure={:.2f})".format(
+                            self.current_emotion, strongest_body,
+                            body_pressure[strongest_body]))
+                        self.current_emotion = strongest_body
+
         # valence/arousal更新
         emotion_data = EMOTIONS.get(self.current_emotion, EMOTIONS["calm"])
         # 緩やかに目標値に近づける
-        self.valence += (emotion_data["valence"] - self.valence) * 0.3
-        self.arousal += (emotion_data["arousal"] - self.arousal) * 0.3
+        target_valence = emotion_data["valence"]
+        target_arousal = emotion_data["arousal"]
+
+        # 身体修飾でvalence/arousalを微調整
+        if body_modifiers:
+            # anxious/startled系が強い → valence下げ、arousal上げ
+            anxiety = body_modifiers.get("anxious", 0) + body_modifiers.get("startled", 0)
+            if anxiety > 0:
+                target_valence -= anxiety * 0.2
+                target_arousal += anxiety * 0.15
+            # bored/lonely系 → arousal下げ
+            ennui = body_modifiers.get("bored", 0) + body_modifiers.get("lonely", 0)
+            if ennui > 0:
+                target_arousal -= ennui * 0.1
+
+        self.valence += (max(0, min(1, target_valence)) - self.valence) * 0.3
+        self.arousal += (max(0, min(1, target_arousal)) - self.arousal) * 0.3
 
         return self.get_state()
 
