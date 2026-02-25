@@ -4,9 +4,38 @@
 
 ## 概要
 
-Vision PAL は、JetBot（Jetson Nano）に搭載されたカメラ映像を VLM（Vision Language Model）で解析し、感情・記憶・独白を自律的に生成するシステムです。ダマシオのソマティック・マーカー仮説に基づく Survival Engine が身体信号から欲求を計算し、LLM の認知をホメオスタシスで修飾します。Apple Vision Pro と組み合わせて、AI の内面世界を AR で可視化するインスタレーション作品としても機能します。
+Vision PAL は、JetBot（Jetson Nano）に搭載されたカメラ映像を VLM（Vision Language Model）で解析し、感情・記憶・独白を自律的に生成するシステムです。ダマシオのソマティック・マーカー仮説に基づく Survival Engine が身体信号から欲求を計算し、LLM の認知をホメオスタシスで修飾します。**AsyncVLA（非同期VLA）二層アーキテクチャ**により、高速な安全判断（Edge層 5ms）と戦略的な認知判断（Cloud層 5-10秒）を同時に実現します。Apple Vision Pro と組み合わせて、AI の内面世界を AR で可視化するインスタレーション作品としても機能します。
 
-## パイプライン
+## AsyncVLA アーキテクチャ
+
+AsyncVLA（非同期 Vision-Language-Action）は、高速な Edge 層と戦略的な Cloud 層を非同期に統合する二層アーキテクチャです。[arXiv:2602.13476](https://arxiv.org/abs/2602.13476) の Edge Adapter 概念に着想を得ています。
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                    AsyncVLA Orchestrator                      │
+│                                                              │
+│  ┌────────────────────┐    ┌──────────────────────────────┐  │
+│  │ 🛡️ Edge層 (~5ms)    │    │ ☁️ Cloud層 (5-10秒)          │  │
+│  │                    │    │                              │  │
+│  │ カメラ → ResNet18  │    │ カメラ → VLM (Gemini)        │  │
+│  │   → blocked確率    │    │   → シーン解析               │  │
+│  │   → 即座に回避     │    │   → Survival Engine (6欲求)  │  │
+│  │                    │    │   → 感情修飾 → LLM行動決定   │  │
+│  └────────┬───────────┘    └──────────┬───────────────────┘  │
+│           │  MQTT                     │  MQTT                │
+│           ▼                           ▼                      │
+│  ┌──────────────────────────────────────────────────────┐    │
+│  │ 🎯 Action Arbiter (行動調停)                         │    │
+│  │ emergency_stop(100) > retreat(90) > avoid(60)        │    │
+│  │ > explore(40) > social(30) > idle(0)                 │    │
+│  │ ※ Edge層は常にCloud層をオーバーライド（安全最優先）   │    │
+│  └──────────────────────┬───────────────────────────────┘    │
+│                         ▼ MQTT: vision_pal/move              │
+│                   mqtt_robot.py → モーター                    │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### レガシーパイプライン（フェーズ1）
 
 ```
 JetBot カメラ → MJPEG配信 → Gemini VLM → MQTT → Cognition Engine → TTS → スピーカー
@@ -27,7 +56,10 @@ VisionPAL/
 │   ├── survival_engine.py     生存エンジン（6欲求ホメオスタシス）
 │   ├── affect.py              感情システム（valence/arousal）
 │   ├── scene_memory.py        シーン記憶（新規/既知判定、N-gram+Jaccard）
+│   ├── async_vla.py           AsyncVLAオーケストレータ（二層統合）
 │   ├── explore_behavior.py    自律探索行動（novelty駆動）
+│   ├── vla_test.py            VLAパイプライン単体テスト
+│   ├── vla_test_v2.py         AsyncVLA二層統合テスト
 │   ├── perception.py          DNN顔検出
 │   ├── vlm_watcher.py         VLMシーン解析（Gemini flash-lite）
 │   ├── prompt_builder.py      独白/SDプロンプト生成
@@ -42,7 +74,8 @@ VisionPAL/
 │   ├── mqtt_robot.py          MQTTモーター制御
 │   ├── mjpeg_server.py        USBカメラMJPEG配信 (port 8554)
 │   ├── mjpeg_perception.py    カメラ+顔検出+MQTT publish
-│   └── collision_detect.py    衝突検知CNN
+│   ├── collision_detect.py    衝突検知v1（フレーム差分方式）
+│   └── collision_detect_v2.py 衝突検知v2（ResNet18 CNN予測 + Edge層）
 │
 ├── VisionPro/          🥽 Vision Proアプリ（Swift/RealityKit）
 │   └── VisionPAL/
@@ -113,7 +146,9 @@ idle 5分+ → novelty蓄積 → novelty > 0.8 → explore アクション発火
 | `vision_pal/survival/state` | survival_engine → | 欲求/ドライブ状態 |
 | `vision_pal/survival/action` | survival_engine → explore_behavior | 自律行動指示 |
 | `vision_pal/explore/state` | explore_behavior → | 探索状態 |
-| `vision_pal/move` | explore/VisionPro → mqtt_robot | モーター制御 |
+| `vision_pal/edge/state` | collision_detect_v2 → async_vla | Edge層CNN予測状態 |
+| `vision_pal/vla/state` | async_vla → | VLA統合状態 |
+| `vision_pal/move` | async_vla/explore/VisionPro → mqtt_robot | モーター制御 |
 | `vision_pal/monologue` | cognitive_loop → | 生成された独白 |
 | `vision_pal/affect/state` | cognitive_loop → | 感情状態 |
 | `vision_pal/effect` | cognitive_loop → VisionPro | 視覚エフェクト |
@@ -150,8 +185,9 @@ PAL_TTS_METHOD=openclaw     # "openclaw" (ElevenLabs) or "local" (Open JTalk)
 python3 ~/mjpeg_server.py --usb
 # 2. 身体センサー
 python3 ~/body_sensor.py
-# 3. 衝突検知
-python3 ~/collision_detect.py
+# 3. 衝突検知（v2: CNN予測 Edge層）
+python3 ~/collision_detect_v2.py --model ~/best_model_resnet18.pth
+# または v1: python3 ~/collision_detect.py
 # 4. モーター制御
 python3 ~/mqtt_robot.py
 # 5. 探索行動（オプション）
@@ -162,13 +198,16 @@ python3 ~/explore_behavior.py
 python3 vlm_watcher.py --interval 5
 # 7. Cognition Engine
 python3 cognitive_loop.py --monologue-cooldown 10
+# 8. AsyncVLA オーケストレータ（Edge+Cloud統合）
+python3 async_vla.py
 ```
 
 ## 関連研究
 
-Survival Engine の設計は以下の研究と同じ方向性を持つ:
+Survival Engine と AsyncVLA の設計は以下の研究と同じ方向性を持つ:
 
-- **EILS** (Tiwari, 2025) — ホメオスタティック感情信号（好奇心のヴント曲線制御）
+- **AsyncVLA** (Hirose & Levine, 2026) — 非同期VLA、Edge Adapterで高速安全判断 [arXiv:2602.13476](https://arxiv.org/abs/2602.13476)
+- **EILS** (Tiwari, 2025) — ホメオスタティック感情信号（好奇心のヴント曲線制御） [arXiv:2512.22200](https://arxiv.org/abs/2512.22200)
 - **HORA** (Bastos & Correia, 2025) — 多次元ホメオスタシス空間からの感情創発
 - **Maroto-Gomez et al.** (2023) — 12種人工神経内分泌物質による動機モデル
 - **Carminatti** (2025) — 人工ストレスとActive Inferenceによる自律性

@@ -21,6 +21,10 @@ TOPIC_BODY = "vision_pal/body/state"           # JetBot → body sensor data
 TOPIC_SURVIVAL = "vision_pal/survival/state"   # survival engine → needs/drives
 TOPIC_SURVIVAL_ACTION = "vision_pal/survival/action"  # survival engine → autonomous actions
 
+# AsyncVLA topics
+TOPIC_EDGE = "vision_pal/edge/state"           # Edge層 → CNN予測状態
+TOPIC_VLA = "vision_pal/vla/state"             # VLAオーケストレータ → 統合状態
+
 # JetBot Camera
 MJPEG_URL = "http://192.168.3.8:8554/stream"
 SNAPSHOT_URL = "http://192.168.3.8:8554/snapshot"
