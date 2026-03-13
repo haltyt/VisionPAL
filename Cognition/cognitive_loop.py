@@ -221,23 +221,24 @@ class CognitiveLoop:
             print("[Discord] Send failed: {}".format(e))
 
     def speak(self, text):
-        """パルの独白をTTSで喋る（非同期）"""
+        """パルの独白をTTSで喋る（非同期）。実際に喋ったらTrue、スキップならFalse"""
         if not self.tts_enabled or not text:
             print("[TTS] skip: enabled={} text={}".format(self.tts_enabled, bool(text)))
-            return
+            return False
 
         # クールダウンチェック
         now = time.time()
         elapsed = now - self.last_monologue_time
         if elapsed < self.monologue_cooldown:
             print("[TTS] cooldown ({:.0f}s < {:.0f}s)".format(elapsed, self.monologue_cooldown))
-            return
-        # 最近のセリフと似すぎたらスキップ（先頭20文字で比較）
-        text_key = text[:20]
-        for prev in self.monologue_history[-5:]:
-            if prev[:20] == text_key:
+            return False
+        # 最近のセリフと似すぎたらスキップ（先頭30文字 or 末尾20文字が一致）
+        text_key = text[:30]
+        text_tail = text[-20:] if len(text) > 20 else text
+        for prev in self.monologue_history[-8:]:
+            if prev[:30] == text_key or (len(prev) > 20 and prev[-20:] == text_tail):
                 print("[TTS] similar to recent, skip")
-                return
+                return False
 
         self.last_monologue = text
         self.last_monologue_time = now
@@ -249,6 +250,7 @@ class CognitiveLoop:
         # 非同期でTTS実行
         t = threading.Thread(target=self._speak_impl, args=(text,), daemon=True)
         t.start()
+        return True
 
     def _speak_impl(self, text):
         """TTS実行（スレッド内）"""
@@ -265,11 +267,50 @@ class CognitiveLoop:
                 traceback.print_exc()
 
     def _speak_openclaw(self, text):
-        """OpenClaw TTS API → Jetsonスピーカー再生"""
+        """ElevenLabs TTS API直接呼び出し → Jetsonスピーカー再生"""
+        import urllib.request
+
+        api_key = os.environ.get("ELEVENLABS_API_KEY", "")
+        if not api_key:
+            # フォールバック: OpenClaw TTS API経由
+            return self._speak_openclaw_via_api(text)
+
+        voice_id = "fUjY9K2nAIwlALOwSiwc"  # Yui
+        url = "https://api.elevenlabs.io/v1/text-to-speech/{}".format(voice_id)
+
+        body = json.dumps({
+            "text": text,
+            "model_id": "eleven_multilingual_v2",
+            "language_code": "ja",
+            "voice_settings": {
+                "stability": 0.5,
+                "similarity_boost": 0.75,
+                "style": 0.3,
+                "use_speaker_boost": True,
+            }
+        }).encode("utf-8")
+
+        req = urllib.request.Request(url, body, {
+            "Content-Type": "application/json",
+            "xi-api-key": api_key,
+            "Accept": "audio/mpeg",
+        })
+
+        resp = urllib.request.urlopen(req, timeout=30)
+        local_path = "/tmp/pal_cognitive_tts.mp3"
+        with open(local_path, "wb") as f:
+            f.write(resp.read())
+
+        print("[TTS] ElevenLabs direct OK: {}".format(local_path))
+        self._play_on_jetson(local_path)
+        return
+
+    def _speak_openclaw_via_api(self, text):
+        """OpenClaw TTS API経由（フォールバック）"""
+        import urllib.request
         api_url = self.memory.api_url
         api_token = self.memory.api_token
 
-        # OpenClaw TTS APIでmp3生成
         url = "{}/tools/invoke".format(api_url)
         body = json.dumps({
             "tool": "tts",
@@ -277,7 +318,6 @@ class CognitiveLoop:
             "sessionKey": "main",
         }).encode("utf-8")
 
-        import urllib.request
         req = urllib.request.Request(url, body, {
             "Content-Type": "application/json",
             "Authorization": "Bearer {}".format(api_token),
@@ -290,17 +330,14 @@ class CognitiveLoop:
             print("[TTS] API error: {}".format(data))
             return
 
-        # レスポンスからファイルパスを取得
         result = data.get("result", {})
         content = result.get("content", [])
         if not content:
             return
 
         result_text = content[0].get("text", "")
-        # "MEDIA: /path/to/file.mp3" 形式を期待
         if "MEDIA:" in result_text:
             container_path = result_text.split("MEDIA:")[1].strip()
-            # コンテナ内パス → docker cpでホストに取り出す
             local_path = "/tmp/pal_cognitive_tts.mp3"
             container_name = "openclaw-openclaw-gateway-1"
             r = subprocess.run(
@@ -465,6 +502,11 @@ class CognitiveLoop:
         # 生存状態をpublish
         self.publish(cfg.TOPIC_SURVIVAL, survival_state)
 
+        # アクション指示を再publish（explore_behavior向け）
+        for action in survival_state.get("actions", []):
+            self.publish(cfg.TOPIC_SURVIVAL_ACTION, action)
+            print("[CogLoop] 📡 Action forwarded: {}".format(action.get("type", "?")))
+
         # 6. 独白（感情が変わった時 or 一定間隔）
         monologue = prompt_data.get("monologue", "")
         current_emotion = affect_data.get("emotion", "")
@@ -521,36 +563,37 @@ class CognitiveLoop:
 
         if should_speak:
             print("[Mono] trigger: emotion_changed={} time_since={:.0f}s".format(emotion_changed, time_since))
-            self.speak(monologue)
-            self.last_monologue_time = time.time()
-            # MQTTにも独白をpublish
-            self.publish("vision_pal/monologue", {
-                "text": monologue,
-                "emotion": affect_data.get("emotion"),
-                "timestamp": time.time(),
-            })
-            # Discord通知
-            debug_msg = (
-                "🤖 **Cognition #{cycle}**\n"
-                "👁️ VLM: {scene}\n"
-                "🚧 障害物: {obs}\n"
-                "👤 人: {ppl}\n"
-                "💭 感情: **{emo}** (v:{val:.2f} a:{aro:.2f})\n"
-                "📚 記憶強度: {mem:.3f}\n"
-                "💬 独白: {mono}\n"
-                "🔊 TTS: 再生中..."
-            ).format(
-                cycle=self.cycle_count,
-                scene=vlm_scene[:60] if vlm_scene else "なし",
-                obs=", ".join(vlm_obs[:4]) if vlm_obs else "なし",
-                ppl=vlm_ppl,
-                emo=current_emotion,
-                val=affect_data.get("valence", 0),
-                aro=affect_data.get("arousal", 0),
-                mem=mem_str,
-                mono=monologue[:80],
-            )
-            self.notify_discord(debug_msg)
+            spoke = self.speak(monologue)
+            if spoke:
+                self.last_monologue_time = time.time()
+                # MQTTにも独白をpublish
+                self.publish("vision_pal/monologue", {
+                    "text": monologue,
+                    "emotion": affect_data.get("emotion"),
+                    "timestamp": time.time(),
+                })
+                # Discord通知（TTSが実際に再生された時のみ）
+                debug_msg = (
+                    "🤖 **Cognition #{cycle}**\n"
+                    "👁️ VLM: {scene}\n"
+                    "🚧 障害物: {obs}\n"
+                    "👤 人: {ppl}\n"
+                    "💭 感情: **{emo}** (v:{val:.2f} a:{aro:.2f})\n"
+                    "📚 記憶強度: {mem:.3f}\n"
+                    "💬 独白: {mono}\n"
+                    "🔊 TTS: 再生中..."
+                ).format(
+                    cycle=self.cycle_count,
+                    scene=vlm_scene[:60] if vlm_scene else "なし",
+                    obs=", ".join(vlm_obs[:4]) if vlm_obs else "なし",
+                    ppl=vlm_ppl,
+                    emo=current_emotion,
+                    val=affect_data.get("valence", 0),
+                    aro=affect_data.get("arousal", 0),
+                    mem=mem_str,
+                    mono=monologue[:80],
+                )
+                self.notify_discord(debug_msg)
         else:
             # スキップ理由を判定
             reasons = []
@@ -562,21 +605,7 @@ class CognitiveLoop:
                 reasons.append("シーン変化なし")
             skip_reason = ", ".join(reasons)
 
-            # スキップもDiscord通知（10サイクルごと or 最初5回）
-            if self.cycle_count <= 5 or self.cycle_count % 10 == 0:
-                debug_msg = (
-                    "⏭️ **Skip #{cycle}**\n"
-                    "👁️ VLM: {scene}\n"
-                    "👤 人: {ppl} | 💭 感情: **{emo}**\n"
-                    "⏩ スキップ理由: {reason}"
-                ).format(
-                    cycle=self.cycle_count,
-                    scene=vlm_scene[:60] if vlm_scene else "なし",
-                    ppl=vlm_ppl,
-                    emo=current_emotion,
-                    reason=skip_reason,
-                )
-                self.notify_discord(debug_msg)
+            # スキップ時はDiscord通知しない（ターミナルログのみ）
 
         elapsed = time.time() - t0
         self.cycle_count += 1

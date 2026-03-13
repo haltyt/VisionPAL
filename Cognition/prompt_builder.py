@@ -142,7 +142,91 @@ class PromptBuilder:
             return "empty void"
 
     def _build_monologue(self, perception, affect, memory_data, style, survival_state=None):
-        """パルの内面独白を生成（TTS用日本語テキスト）"""
+        """パルの内面独白をLLMで生成（TTS用日本語テキスト）"""
+        try:
+            return self._build_monologue_llm(perception, affect, memory_data, style, survival_state)
+        except Exception as e:
+            print("[Mono] LLM failed ({}), using fallback".format(e))
+            return self._build_monologue_fallback(perception, affect, memory_data, style, survival_state)
+
+    def _build_monologue_llm(self, perception, affect, memory_data, style, survival_state=None):
+        """LLM（Gemini）で独白を生成"""
+        import urllib.request
+        import json as _json
+
+        import os as _os
+        api_key = _os.environ.get("GEMINI_API_KEY", "")
+        if not api_key:
+            raise ValueError("No GEMINI_API_KEY")
+
+        emotion = affect.get("emotion", "calm")
+        valence = affect.get("valence", 0.5)
+        arousal = affect.get("arousal", 0.3)
+        vlm_scene = perception.get("vlm_scene", "")
+        vlm_people = perception.get("vlm_people", 0)
+        vlm_obstacles = perception.get("vlm_obstacles", [])
+        has_person = perception.get("has_person", False)
+        scene_mem = perception.get("scene_memory", {})
+        is_new = scene_mem.get("is_new", False)
+        memories = memory_data.get("memories", [])
+        dominant_drive = ""
+        if survival_state:
+            dominant_drive = survival_state.get("dominant_drive", "")
+
+        # 直近の独白を渡して重複回避
+        recent = self.monologue_history[-3:] if hasattr(self, 'monologue_history') else []
+
+        prompt = (
+            "あなたは「パル」という小さなロボット。JetBotに乗って部屋を探索している。\n"
+            "カメラで見たものと自分の感情に基づいて、短い独白（心の声）を日本語で生成して。\n\n"
+            "【ルール】\n"
+            "- 1〜2文、30文字以内\n"
+            "- 自然な話し言葉（「〜だなぁ」「〜かな」「〜だ！」など）\n"
+            "- 感情に合ったトーン\n"
+            "- 見えてるものに具体的に言及する\n"
+            "- 前と同じセリフを言わない\n"
+            "- 独白のみ出力（説明や注釈は不要）\n\n"
+            "【今の状態】\n"
+            "感情: {} (快適度:{:.1f} 覚醒度:{:.1f})\n"
+            "見えてるシーン: {}\n"
+            "人: {}名\n"
+            "障害物: {}\n"
+            "この場所は: {}\n"
+            "一番強い欲求: {}\n"
+            "直近の独白（これと違うことを言って）:\n{}\n"
+        ).format(
+            emotion, valence, arousal,
+            vlm_scene[:100] if vlm_scene else "不明",
+            vlm_people,
+            ", ".join(vlm_obstacles[:4]) if vlm_obstacles else "なし",
+            "初めて来た場所" if is_new else "前にも来たことがある場所",
+            dominant_drive if dominant_drive else "特になし",
+            "\n".join(["- " + m for m in recent]) if recent else "（なし）",
+        )
+
+        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={}".format(api_key)
+        body = _json.dumps({
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"maxOutputTokens": 60, "temperature": 1.0},
+        }).encode("utf-8")
+
+        req = urllib.request.Request(url, body, {"Content-Type": "application/json"})
+        resp = urllib.request.urlopen(req, timeout=5)
+        data = _json.loads(resp.read().decode("utf-8"))
+        text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+        # 余計な引用符や改行を除去
+        text = text.strip('"\'').split("\n")[0].strip()
+
+        if not hasattr(self, 'monologue_history'):
+            self.monologue_history = []
+        self.monologue_history.append(text)
+        if len(self.monologue_history) > 10:
+            self.monologue_history.pop(0)
+
+        return text
+
+    def _build_monologue_fallback(self, perception, affect, memory_data, style, survival_state=None):
+        """フォールバック: テンプレートベースの独白生成"""
         emotion = affect.get("emotion", "calm")
         memories = memory_data.get("memories", [])
         has_person = perception.get("has_person", False)
@@ -164,7 +248,18 @@ class PromptBuilder:
             "bored": ["ふぁ〜...暇だなぁ。", "何かないかな〜。", "退屈だ〜。", "うーん、やることないな。"],
         }
         openers = emotion_openers.get(emotion, ["..."])
-        lines.append(random.choice(openers))
+        # 直近で使ったopenerを避ける
+        if not hasattr(self, '_used_openers'):
+            self._used_openers = []
+        available = [o for o in openers if o not in self._used_openers]
+        if not available:
+            self._used_openers = []
+            available = openers
+        chosen = random.choice(available)
+        self._used_openers.append(chosen)
+        if len(self._used_openers) > len(openers) * 2:
+            self._used_openers = self._used_openers[-3:]
+        lines.append(chosen)
 
         # VLMシーン情報を使った知覚中間
         vlm_scene = perception.get("vlm_scene", "")
