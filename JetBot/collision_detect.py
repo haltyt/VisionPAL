@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-JetBot 衝突検知 - MJPEG経由カメラフレーム差分方式
+JetBot 衝突検知 - カメラフレーム差分方式
 モーター動作中に映像変化が止まったら衝突と判定
-衝突イベントをMQTT publishする
 Python 3.6対応
 """
 
@@ -11,67 +10,52 @@ import numpy as np
 import time
 import subprocess
 import sys
-import json
-
-try:
-    import paho.mqtt.client as mqtt
-    HAS_MQTT = True
-except ImportError:
-    HAS_MQTT = False
 
 # --- 設定 ---
-COLLISION_THRESHOLD = 1.0
-COLLISION_FRAMES = 3
-CHECK_INTERVAL = 0.1
-MJPEG_URL = "http://127.0.0.1:8554/raw"
-MQTT_BROKER = "192.168.3.5"
-MQTT_PORT = 1883
-MQTT_TOPIC = "vision_pal/perception/collision"
+COLLISION_THRESHOLD = 1.0    # フレーム差分の平均がこれ以下なら「動いてない」
+COLLISION_FRAMES = 3         # 連続N フレーム動きなしで衝突判定
+CHECK_INTERVAL = 0.1         # フレーム取得間隔(秒)
+CAMERA_WIDTH = 320
+CAMERA_HEIGHT = 240
 
-MOTOR_STATE_FILE = "/tmp/jetbot_motor_state"
+# GStreamer パイプライン (JetBot IMX219 CSI)
+GST_PIPELINE = (
+    "nvarguscamerasrc ! "
+    "video/x-raw(memory:NVMM),width=1280,height=720,framerate=30/1 ! "
+    "nvvidconv ! video/x-raw,width=320,height=240,format=BGRx ! "
+    "videoconvert ! video/x-raw,format=BGR ! "
+    "appsink drop=1"
+)
 
 
 def log(msg):
     print(msg, flush=True)
 
-
-def setup_mqtt():
-    if not HAS_MQTT:
-        log("[WARN] paho-mqtt not installed, MQTT disabled")
-        return None
-    try:
-        client = mqtt.Client("jetbot_collision")
-        client.connect(MQTT_BROKER, MQTT_PORT, 60)
-        client.loop_start()
-        log("[OK] MQTT connected to {}:{}".format(MQTT_BROKER, MQTT_PORT))
-        return client
-    except Exception as e:
-        log("[WARN] MQTT connection failed: {}".format(e))
-        return None
-
-
 def open_camera():
-    log("[INFO] MJPEG接続中... {}".format(MJPEG_URL))
-    cap = cv2.VideoCapture(MJPEG_URL)
+    log("[INFO] カメラ起動中...")
+    cap = cv2.VideoCapture(GST_PIPELINE, cv2.CAP_GSTREAMER)
     if not cap.isOpened():
-        log("[ERROR] MJPEG開けない！mjpeg_light.py起動してる？")
+        log("[ERROR] カメラ開けない！")
         sys.exit(1)
-    # ウォームアップ
-    for i in range(5):
+    log("[INFO] パイプライン開いた、ウォームアップ中...")
+    # 最初の数フレーム捨てる（露出安定待ち）
+    for i in range(10):
         ret, _ = cap.read()
         if i == 0:
             log("[INFO] 最初のread: ret={}".format(ret))
         time.sleep(0.05)
-    log("[OK] カメラ接続完了")
+    log("[OK] カメラ起動")
     return cap
 
 
 def frame_diff(prev_gray, curr_gray):
+    """2フレーム間の差分の平均値を返す"""
     diff = cv2.absdiff(prev_gray, curr_gray)
     return np.mean(diff)
 
 
-def on_collision(mqtt_client, diff_val):
+def on_collision():
+    """衝突時のアクション"""
     log("💥 衝突検知！！！")
     # モーター停止
     try:
@@ -83,17 +67,7 @@ def on_collision(mqtt_client, diff_val):
     except Exception as e:
         log("[WARN] モーター停止失敗: {}".format(e))
 
-    # MQTT publish
-    if mqtt_client:
-        payload = json.dumps({
-            "collision": True,
-            "diff": round(diff_val, 3),
-            "timestamp": time.time()
-        })
-        mqtt_client.publish(MQTT_TOPIC, payload)
-        log("[MQTT] collision published")
-
-    # ブザー音
+    # スピーカーでブザー音（あれば）
     try:
         subprocess.Popen(
             ["aplay", "-D", "plughw:2,0", "/tmp/beep.wav"],
@@ -103,12 +77,18 @@ def on_collision(mqtt_client, diff_val):
         pass
 
 
+MOTOR_STATE_FILE = "/tmp/jetbot_motor_state"
+
 def is_motor_running():
+    """モーターが動作中かチェック（状態ファイル or プロセス存在で判定）"""
+    # 状態ファイル方式（jetbot_control.pyが書き込む）
     try:
         with open(MOTOR_STATE_FILE, "r") as f:
-            return f.read().strip() == "running"
+            state = f.read().strip()
+            return state == "running"
     except Exception:
         pass
+    # フォールバック: プロセス存在チェック
     try:
         result = subprocess.Popen(
             ["pgrep", "-f", "jetbot_control"],
@@ -121,19 +101,16 @@ def is_motor_running():
 
 
 def main():
-    log("=== JetBot 衝突検知スタート (MJPEG版) ===")
+    log("=== JetBot 衝突検知スタート ===")
     log("閾値: {}, 連続フレーム: {}".format(COLLISION_THRESHOLD, COLLISION_FRAMES))
 
-    mqtt_client = setup_mqtt()
     cap = open_camera()
-
     ret, frame = cap.read()
     if not ret:
         log("[ERROR] 最初のフレーム取得失敗")
         return
 
     prev_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    prev_gray = cv2.resize(prev_gray, (320, 240))
     still_count = 0
     collision_cooldown = 0
 
@@ -143,22 +120,19 @@ def main():
 
             ret, frame = cap.read()
             if not ret:
-                # MJPEG再接続
-                log("[WARN] フレーム取得失敗、再接続...")
-                cap.release()
-                time.sleep(1)
-                cap = cv2.VideoCapture(MJPEG_URL)
                 continue
 
             curr_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            curr_gray = cv2.resize(curr_gray, (320, 240))
             diff_val = frame_diff(prev_gray, curr_gray)
             prev_gray = curr_gray
 
+            # クールダウン中
             if collision_cooldown > 0:
                 collision_cooldown -= 1
                 continue
 
+            # モーター動いてる時だけチェック
+            # (常時チェックモードにしたい場合はこの条件外す)
             if not is_motor_running():
                 still_count = 0
                 continue
@@ -173,16 +147,14 @@ def main():
                 still_count = 0
 
             if still_count >= COLLISION_FRAMES:
-                on_collision(mqtt_client, diff_val)
+                on_collision()
                 still_count = 0
-                collision_cooldown = 30
+                collision_cooldown = 30  # 3秒クールダウン
 
     except KeyboardInterrupt:
         log("\n終了")
     finally:
         cap.release()
-        if mqtt_client:
-            mqtt_client.loop_stop()
 
 
 if __name__ == "__main__":

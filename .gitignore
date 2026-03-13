@@ -22,3 +22,8 @@ credentials.json
 
 # Logs
 *.log
+
+# Large binary assets
+*.usdz
+*.ply
+*.glb

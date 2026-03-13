@@ -71,7 +71,7 @@ class PromptBuilder:
         self.last_monologue = ""
         self.prompt_history = []  # 直近のプロンプト履歴（変化検出用）
 
-    def build(self, perception, affect, memory_data):
+    def build(self, perception, affect, memory_data, survival_state=None):
         """全データを統合してプロンプトを生成
 
         Args:
@@ -101,7 +101,7 @@ class PromptBuilder:
         arousal = affect.get("arousal", 0.5)
 
         # 内面独白を生成
-        monologue = self._build_monologue(perception, affect, memory_data, style)
+        monologue = self._build_monologue(perception, affect, memory_data, style, survival_state)
 
         self.last_prompt = sd_prompt
         self.last_monologue = monologue
@@ -141,7 +141,7 @@ class PromptBuilder:
         else:
             return "empty void"
 
-    def _build_monologue(self, perception, affect, memory_data, style):
+    def _build_monologue(self, perception, affect, memory_data, style, survival_state=None):
         """パルの内面独白を生成（TTS用日本語テキスト）"""
         emotion = affect.get("emotion", "calm")
         memories = memory_data.get("memories", [])
@@ -170,37 +170,61 @@ class PromptBuilder:
         vlm_scene = perception.get("vlm_scene", "")
         vlm_obstacles = perception.get("vlm_obstacles", [])
         vlm_people = perception.get("vlm_people", 0)
+        scene_mem = perception.get("scene_memory", {})
+
+        # シーン記憶に基づく反応（新規/既知）
+        if scene_mem.get("reaction"):
+            lines.append(scene_mem["reaction"])
 
         if vlm_scene:
-            # VLMの詳細シーン情報がある場合
             if vlm_people > 0:
-                lines.append("あ、誰かいる！ハルトかな？")
-                if vlm_scene:
-                    # シーンから具体的な描写を追加
-                    lines.append("{}みたい。".format(vlm_scene[:40]))
-            if vlm_obstacles:
+                if scene_mem.get("is_new"):
+                    lines.append("あ、知らない人がいる！")
+                else:
+                    lines.append("あ、ハルトだ！")
+            # シーンの具体的な描写（新しいシーンの時だけ詳しく）
+            if scene_mem.get("is_new") and vlm_obstacles:
                 import random
                 obs_sample = random.sample(vlm_obstacles, min(2, len(vlm_obstacles)))
-                lines.append("{}が見える。".format("と".join(obs_sample)))
+                lines.append("{}がある。".format("と".join(obs_sample)))
+            elif not scene_mem.get("is_new") and scene_mem.get("visit_count", 0) <= 3:
+                # まだ数回しか見てない→少し描写
+                if vlm_obstacles:
+                    import random
+                    obs = random.choice(vlm_obstacles)
+                    lines.append("{}か...前も見たな。".format(obs))
         elif has_person:
             lines.append("あ、誰かいる。ハルトかな？")
         elif objects:
             labels = [o.get("label", "") for o in objects[:2]]
             obj_names = {
-                "cat": "猫",
-                "dog": "犬",
-                "chair": "椅子",
-                "bottle": "ボトル",
-                "tvmonitor": "モニター",
-                "keyboard": "キーボード",
-                "car": "車",
-                "bicycle": "自転車",
-                "book": "本",
-                "cup": "コップ",
+                "cat": "猫", "dog": "犬", "chair": "椅子",
+                "bottle": "ボトル", "tvmonitor": "モニター",
+                "keyboard": "キーボード", "car": "車",
+                "bicycle": "自転車", "book": "本", "cup": "コップ",
             }
             named = [obj_names.get(l, l) for l in labels if l]
             if named:
                 lines.append("{}が見える。".format("と".join(named)))
+
+        # 身体の声（survival_engineからの欲求）
+        if survival_state:
+            drives = survival_state.get("drives", {})
+            dominant = survival_state.get("dominant_drive", "")
+            dominant_level = survival_state.get("dominant_level", 0)
+
+            body_lines = {
+                "energy": ["なんか力が出ない...充電したいなぁ。", "バッテリー減ってきた..."],
+                "thermal": ["あっつ...ちょっと休もう。", "体が熱い..."],
+                "safety": ["さっきぶつかったの怖かった...慎重にいこう。", "もうぶつかりたくない..."],
+                "novelty": ["どこか行きたいなぁ。ずっと同じ景色だ。", "何か新しいもの見たい！"],
+                "social": ["誰かと話したいな...ハルト、いる？", "ひとりぼっち..."],
+                "territory": ["ディスクがパンパン...お掃除しなきゃ。", "メモリ足りない..."],
+            }
+
+            if dominant_level > 0.5 and dominant in body_lines:
+                import random
+                lines.append(random.choice(body_lines[dominant]))
 
         # 記憶に基づく後半
         if memories:
