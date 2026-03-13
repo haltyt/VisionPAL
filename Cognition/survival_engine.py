@@ -283,7 +283,7 @@ class SurvivalEngine:
                     "urgency": drive.level,
                     "description": "危ない...後退しよう",
                 }
-            elif name == "novelty" and drive.level > 0.8:
+            elif name == "novelty" and drive.level > 0.6:
                 action = {
                     "type": "explore",
                     "urgency": drive.level,

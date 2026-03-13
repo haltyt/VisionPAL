@@ -228,6 +228,7 @@ class ExploreBehavior:
         self.new_scenes_found = 0
         self.last_direction = "forward"
         self._lock = threading.Lock()
+        self._idle_stuck_time = time.time()
         self._stop_event = threading.Event()
 
         # 最新のシーン＆欲求データ
@@ -312,7 +313,7 @@ class ExploreBehavior:
             print("[Explore] 💥 Collision detected!")
 
     def _handle_scene(self, data):
-        """VLMシーン情報を保存 + 新シーン検知"""
+        """VLMシーン情報を保存 + 新シーン検知 + 非探索時スタック検知"""
         with self._lock:
             self.current_scene = data
         changes = data.get("changes", "")
@@ -320,7 +321,27 @@ class ExploreBehavior:
             with self._lock:
                 self.scene_changed = True
                 self.new_scenes_found += 1
+                self._idle_stuck_time = time.time()
             print("[Explore] 🆕 New scene detected!")
+        else:
+            # 非探索時: 30秒シーン変化なしならスタック脱出→前進
+            if not self.exploring and hasattr(self, '_idle_stuck_time'):
+                if time.time() - self._idle_stuck_time > 30:
+                    print("[Explore] 🔄 Idle stuck! Back + 180° + forward")
+                    self._send_move("backward", EXPLORE_SPEED)
+                    time.sleep(1.5)
+                    self._send_move("stop", 0)
+                    time.sleep(0.2)
+                    direction = random.choice(["left", "right"])
+                    self._send_move(direction, TURN_SPEED)
+                    time.sleep(1.35)
+                    self._send_move("stop", 0)
+                    time.sleep(0.2)
+                    # 脱出後に前進
+                    self._send_move("forward", EXPLORE_SPEED)
+                    time.sleep(2.0)
+                    self._send_move("stop", 0)
+                    self._idle_stuck_time = time.time()
 
     def _handle_survival_state(self, data):
         """survival stateを保存 + novelty回復チェック"""
@@ -331,9 +352,10 @@ class ExploreBehavior:
         drives = data.get("drives", {})
         novelty = drives.get("novelty", {})
         level = novelty.get("level", 1.0)
-        if level < 0.4:
-            print("[Explore] ✅ Novelty satisfied ({:.2f})! Stopping explore.".format(level))
-            self._stop_explore("novelty satisfied")
+        # 探索中はnoveltyチェックしない（時間ベースで探索継続）
+        # if level < 0.15:
+        #     print("[Explore] ✅ Novelty satisfied ({:.2f})! Stopping explore.".format(level))
+        #     self._stop_explore("novelty satisfied")
 
     def _start_explore(self, urgency):
         """探索開始"""
@@ -371,6 +393,8 @@ class ExploreBehavior:
         """探索のメインループ（VLAプランナー統合）"""
         start = time.time()
         last_plan_time = 0
+        last_scene_change = time.time()
+        stuck_threshold = 15  # 15秒間シーン変化なしでスタック判定
 
         try:
             while not self._stop_event.is_set():
@@ -460,12 +484,33 @@ class ExploreBehavior:
                     self._send_move("stop", 0)
                     time.sleep(0.2)
 
-                # シーン変化チェック
+                # シーン変化チェック & スタック検知
                 with self._lock:
-                    if self.scene_changed and self.new_scenes_found >= 2:
-                        print("[Explore] 🎉 Found {} new scenes!".format(self.new_scenes_found))
-                        break
+                    if self.scene_changed:
+                        last_scene_change = time.time()
+                        if self.new_scenes_found >= 2:
+                            print("[Explore] 🎉 Found {} new scenes!".format(self.new_scenes_found))
+                            break
                     self.scene_changed = False
+
+                # スタック脱出: 一定時間シーンが変わらなければバック→180度回転
+                if time.time() - last_scene_change > stuck_threshold:
+                    print("[Explore] 🔄 Stuck! Back + 180° + forward")
+                    self._send_move("backward", EXPLORE_SPEED)
+                    time.sleep(1.5)
+                    self._send_move("stop", 0)
+                    time.sleep(0.2)
+                    direction = random.choice(["left", "right"])
+                    self._send_move(direction, TURN_SPEED)
+                    time.sleep(1.35)  # 180度 ≈ 0.675s × 2
+                    self._send_move("stop", 0)
+                    time.sleep(0.2)
+                    self._send_move("forward", EXPLORE_SPEED)
+                    time.sleep(2.0)
+                    self._send_move("stop", 0)
+                    last_scene_change = time.time()
+                    self._publish_state("unstuck", "🔄 スタック脱出！バック→180度→前進")
+                    continue
 
         finally:
             self._send_move("stop", 0)
@@ -558,17 +603,24 @@ class ExploreBehavior:
             }, ensure_ascii=False))
 
     def run(self):
-        """メインループ（ブロッキング）"""
+        """メインループ（常時巡回モード）"""
         print("=" * 50)
         print("  Vision PAL - Explore Behavior (VLA Phase 1)")
         print("  VLA Planner: {}".format(
             "ENABLED" if self.planner.available else "DISABLED (fallback mode)"))
-        print("  Waiting for explore actions...")
+        print("  Mode: ALWAYS ROAMING (auto-patrol)")
         print("=" * 50)
 
         try:
             while True:
-                time.sleep(1)
+                # 探索中でなければ自動で巡回開始
+                if not self.exploring:
+                    time.sleep(5)  # 少し待ってから次の巡回
+                    if not self.exploring:  # まだ探索してなければ
+                        print("[Explore] 🚶 Auto-patrol starting...")
+                        self._start_explore(0.5)
+                else:
+                    time.sleep(1)
         except KeyboardInterrupt:
             print("\n[Explore] Shutting down...")
             if self.exploring:
