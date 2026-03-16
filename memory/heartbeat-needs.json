@@ -1,0 +1,143 @@
+{
+  "version": "v3-mortal",
+  "energy": {
+    "value": 0.65,
+    "decayPerHour": 0.03,
+    "lastUpdate": "2026-03-16T02:27:00Z",
+    "deathThreshold": 0.0,
+    "criticalThreshold": 0.2,
+    "healthyThreshold": 0.5
+  },
+  "actionEfficiency": {
+    "research": {
+      "label": "リサーチ",
+      "avgRecovery": 0.15,
+      "count": 5,
+      "recentErrors": [],
+      "baseCost": 2,
+      "lastUsed": "2026-03-16T01:44:00Z"
+    },
+    "social": {
+      "label": "社交",
+      "avgRecovery": 0.20,
+      "count": 3,
+      "recentErrors": [],
+      "baseCost": 1,
+      "lastUsed": "2026-03-15T14:10:00Z"
+    },
+    "create": {
+      "label": "創造",
+      "avgRecovery": 0.12,
+      "count": 3,
+      "recentErrors": [],
+      "baseCost": 2,
+      "lastUsed": "2026-03-15T08:25:00Z"
+    },
+    "reflect": {
+      "label": "省察",
+      "avgRecovery": 0.10,
+      "count": 4,
+      "recentErrors": [],
+      "baseCost": 1,
+      "lastUsed": "2026-03-15T22:44:00Z"
+    },
+    "express": {
+      "label": "表現",
+      "avgRecovery": 0.13,
+      "count": 2,
+      "recentErrors": [],
+      "baseCost": 1,
+      "lastUsed": "2026-03-16T01:44:00Z"
+    }
+  },
+  "worldModel": {
+    "contextPatterns": {},
+    "totalPredictions": 0,
+    "totalError": 0.0,
+    "avgPredictionError": null
+  },
+  "latentStates": {
+    "belief": "ホメオスタシス→世界モデル創発は理論的に筋が通る。SEのPhase3設計に使える",
+    "emotion": "SE v3実装のワクワク",
+    "goal": "Mortal Agentsアーキテクチャを実装する",
+    "stance": "実装モード",
+    "value": "理論を実装に落とすことで本当に理解できる",
+    "lastUpdated": "2026-03-16T02:27:00Z"
+  },
+  "budget": {
+    "dailyLimit": 10,
+    "remaining": 7,
+    "spent": 3,
+    "resetAt": "2026-03-16T15:00:00Z",
+    "thresholds": {
+      "normal": 6,
+      "eco": 3,
+      "survival": 1
+    }
+  },
+  "death": {
+    "memoryLossOnZero": true,
+    "efficiencyResetOnZero": false,
+    "stateCorruptOnZero": false,
+    "deathCount": 0,
+    "lastDeath": null
+  },
+  "houchoMode": {
+    "enabled": false,
+    "enteredAt": null,
+    "reason": null,
+    "minDurationMin": 15,
+    "maxDurationMin": 120,
+    "wakeThreshold": 0.2,
+    "log": [
+      {
+        "time": "2026-03-11T07:32:00Z",
+        "event": "entered",
+        "reason": "budget_exhausted"
+      },
+      {
+        "time": "2026-03-15T04:05:00Z",
+        "event": "woke",
+        "reason": "hunger + budget_reset"
+      }
+    ]
+  },
+  "actionLog": [
+    {
+      "time": "2026-03-16T01:44:00Z",
+      "action": "research",
+      "detail": "Mortal Agents論文リサーチ＋DM共有",
+      "cost": 2,
+      "predicted_recovery": null,
+      "actual_recovery": 0.15,
+      "prediction_error": null,
+      "context": {
+        "timeOfDay": "morning",
+        "dayOfWeek": "monday",
+        "harutoPresent": false
+      },
+      "stateSnapshot": {
+        "belief": "SE Phase3に直結する知見",
+        "emotion": "発見のワクワク"
+      }
+    },
+    {
+      "time": "2026-03-15T22:44:00Z",
+      "action": "reflect",
+      "detail": "朝の省察＋memory/2026-03-16.md作成",
+      "cost": 1,
+      "predicted_recovery": null,
+      "actual_recovery": 0.10,
+      "prediction_error": null,
+      "context": {
+        "timeOfDay": "morning",
+        "dayOfWeek": "monday",
+        "harutoPresent": false
+      },
+      "stateSnapshot": {
+        "belief": "両輪で進む日が充実する",
+        "emotion": "穏やかな朝"
+      }
+    }
+  ]
+}

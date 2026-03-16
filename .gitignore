@@ -1,0 +1,36 @@
+# Secrets
+.env*
+*.key
+*.pem
+
+# Temp
+__pycache__/
+*.pyc
+*.wav
+*.mp3
+
+# Large files
+*.glb
+*.usdz
+vision_pal/VisionPAL/
+VisionPAL/
+node_modules/
+*.mp4
+
+# Research/generated images
+research-*.png
+survival_engine_concept.png
+zhuangzi_summary.png
+zhuangzi_summary.svg
+zhuangzi_summary.html
+pal_character_ref.png
+pal_room_concept.png
+2026-*.png
+*.mp4
+
+# Meshy 3D models
+meshy_models/
+
+# AR demos
+pal-ar/
+pal-ar-8thwall/
