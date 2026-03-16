@@ -28,8 +28,8 @@ MQTT_TOPIC = "vision_pal/move"
 
 # スティック設定
 DEADZONE = 5000       # スティック中央の不感帯
-BASE_SPEED = 0.4      # 通常速度 (0.0-1.0)
-BOOST_SPEED = 0.7     # ブースト速度
+BASE_SPEED = 0.25      # 通常速度 (0.0-1.0)
+BOOST_SPEED = 0.4     # ブースト速度
 SEND_INTERVAL = 0.1   # MQTT送信間隔(秒)
 HIDRAW_DEVICE = "/dev/hidraw1"  # DualSense hidraw
 
@@ -39,34 +39,30 @@ HIDRAW_DEVICE = "/dev/hidraw1"  # DualSense hidraw
 
 
 def open_haptics():
-    """DualSense hidrawを開く（振動用、書き込み専用）"""
+    """DualSense hidrawを開く（振動用、USB: O_RDWR）"""
     try:
         import os
-        fd = os.open(HIDRAW_DEVICE, os.O_WRONLY)
-        hf = os.fdopen(fd, "wb", buffering=0)
-        print("[HAPTICS] Opened %s (write-only)" % HIDRAW_DEVICE)
-        return hf
+        fd = os.open(HIDRAW_DEVICE, os.O_RDWR)
+        print("[HAPTICS] Opened %s (USB rdwr)" % HIDRAW_DEVICE)
+        return fd
     except Exception as e:
         print("[HAPTICS] Failed: %s (try: sudo chmod 666 /dev/hidraw1)" % e)
         return None
 
 
 def set_rumble(hf, right, left):
-    """DualSense BT振動 (0-255)"""
+    """DualSense USB振動 (0-255)"""
     if hf is None:
         return
     try:
-        buf = bytearray(78)
-        buf[0] = 0x31
-        buf[1] = 0x02
-        buf[2] = 0x03
-        buf[3] = 0x15
-        buf[4] = right
-        buf[5] = left
-        crc_data = bytearray([0xA2]) + buf[:-4]
-        crc = binascii.crc32(bytes(crc_data)) & 0xFFFFFFFF
-        buf[-4:] = struct.pack('<I', crc)
-        hf.write(bytes(buf))
+        import os
+        buf = bytearray(48)
+        buf[0] = 0x02
+        buf[1] = 0xFF
+        buf[2] = 0x01
+        buf[3] = min(255, max(0, right))
+        buf[4] = min(255, max(0, left))
+        os.write(hf, bytes(buf))
     except Exception:
         pass
 
@@ -97,9 +93,10 @@ def main():
     last_direction = "stop"
     running = True
 
-    # ハプティクス（無効化中 — hidraw openがjs0入力を止める問題）
-    haptics = None  # open_haptics()
 
+    haptics = open_haptics()
+
+    paused = False
     print("[DRIVE] Ready! Left stick to drive, × to stop, ○ to quit")
     print("[DRIVE] Base speed: %.0f%%, Boost (R2): %.0f%%" % (
         BASE_SPEED * 100, BOOST_SPEED * 100))
@@ -118,13 +115,18 @@ def main():
 
             if etype == 1:  # ボタン
                 buttons[number] = value
-                if number == 0 and value == 1:  # × 押下
-                    print("[STOP] Emergency stop!")
-                    client.publish(MQTT_TOPIC, json.dumps({
-                        "direction": "stop", "speed": 0
-                    }))
-                    last_direction = "stop"
-                elif number == 1 and value == 1:  # ○ 押下
+                if number == 1 and value == 1:  # × 押下(USB): トグル停止/再開
+                    paused = not paused
+                    if paused:
+                        print("[STOP] Paused! Press × to resume")
+                        client.publish(MQTT_TOPIC, json.dumps({
+                            "direction": "stop", "speed": 0
+                        }))
+                        set_rumble(haptics, 0, 0)
+                        last_direction = "stop"
+                    else:
+                        print("[RESUME] Resumed!")
+                elif number == 2 and value == 1:  # ○ 押下(USB)
                     print("[QUIT] Bye!")
                     client.publish(MQTT_TOPIC, json.dumps({
                         "direction": "stop", "speed": 0
@@ -141,6 +143,8 @@ def main():
             last_send = now
 
             # スティック値取得
+            if paused:
+                continue
             lx = axes.get(0, 0)  # 左右 (-32768 ~ 32767)
             ly = axes.get(1, 0)  # 上下 (-32768=上, 32767=下)
             r2 = axes.get(5, -32768)  # R2トリガー (-32768=離す, 32767=全押し)
@@ -177,8 +181,8 @@ def main():
 
             # 速度連動ハプティクス
             motor_mag = max(abs(left_speed), abs(right_speed))
-            rumble = int(motor_mag * 200)  # 0-200 (max 200で手が痺れない程度)
-            rumble = min(200, max(0, rumble))
+            rumble = int(motor_mag * 40)  # 0-200 (max 200で手が痺れない程度)
+            rumble = min(40, max(0, rumble))
             if direction == "stop":
                 rumble = 0
             set_rumble(haptics, rumble, rumble)
@@ -207,7 +211,7 @@ def main():
         client.disconnect()
         js.close()
         if haptics:
-            haptics.close()
+            import os; os.close(haptics) if haptics else None
         print("[DRIVE] Stopped")
 
 
