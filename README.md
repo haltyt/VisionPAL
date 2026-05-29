@@ -50,8 +50,11 @@ JetBot カメラ → MJPEG配信 → Gemini VLM → MQTT → Cognition Engine �
 
 ```
 VisionPAL/
+├── .env.example            🔐 全マシン共通の設定テンプレ (cp .env.example .env)
+├── vp_env.py               🔐 Python 共通 .env ローダー (依存なし)
+│
 ├── Cognition/          🧠 認知エンジン（Jetson/コンテナで実行）
-│   ├── config.py              MQTT/モデル設定
+│   ├── config.py              MQTT/モデル設定 (.env 経由)
 │   ├── cognitive_loop.py      メインループ（全体統合）
 │   ├── survival_engine.py     生存エンジン（6欲求ホメオスタシス）
 │   ├── affect.py              感情システム（valence/arousal）
@@ -71,19 +74,23 @@ VisionPAL/
 │   └── battle_server.py       バトルサーバー
 │
 ├── JetBot/             🤖 JetBot側スクリプト
-│   ├── mqtt_robot.py          MQTTモーター制御
+│   ├── mqtt_robot.py          MQTTモーター制御 (差動操舵対応)
 │   ├── mjpeg_server.py        USBカメラMJPEG配信 (port 8554)
 │   ├── mjpeg_perception.py    カメラ+顔検出+MQTT publish
+│   ├── imu_collision.py       IMU衝突検知（MPU6050）
 │   ├── collision_detect.py    衝突検知v1（フレーム差分方式）
 │   └── collision_detect_v2.py 衝突検知v2（ResNet18 CNN予測 + Edge層）
 │
 ├── VisionPro/          🥽 Vision Proアプリ（Swift/RealityKit）
 │   └── VisionPAL/
+│       ├── .env.example              Vision Pro アプリ用 .env テンプレ
+│       ├── AppConfig.swift           Bundle 内 .env を起動時に読み込み
 │       ├── VisionPALApp.swift
-│       ├── ContentView.swift
+│       ├── ContentView.swift         （`.handlesGameControllerEvents(matching:)` 適用）
 │       ├── ImmersiveControlView.swift
 │       ├── MJPEGView.swift           MJPEG映像表示
 │       ├── RobotController.swift      MQTT操縦
+│       ├── GameControllerManager.swift  DualSense Bluetooth → 差動操舵
 │       ├── EmotionEffectController.swift
 │       ├── EmotionParticleView.swift  感情パーティクル
 │       ├── CurvedScreenView.swift     湾曲スクリーン
@@ -94,8 +101,9 @@ VisionPAL/
 │   ├── server.py              StreamDiffusionサーバー
 │   └── sharp_server.py        SHARP 3DGS生成サーバー
 │
-└── Controller/         🎮 物理コントローラー
-    └── switch_controller.py
+└── Controller/         🎮 物理コントローラー (Jetson host USB 直結用)
+    ├── dualsense_drive.py     DualSense USB → 差動操舵 → MQTT
+    └── switch_controller.py   Nintendo Switch Joy-Con/Pro
 ```
 
 ## Survival Engine（生存エンジン）
@@ -157,25 +165,67 @@ idle 5分+ → novelty蓄積 → novelty > 0.8 → explore アクション発火
 
 ### 必要環境
 
-- **JetBot**: Jetson Nano 4GB, USB カメラ, USB スピーカー
-- **Jetson ホスト**: Mosquitto MQTT ブローカー, OpenClaw
+- **JetBot**: Jetson Nano 4GB, USB カメラ, USB スピーカー (Mosquitto 同居 OK)
+- **Jetson ホスト** (オプション): 認知エンジン/OpenClaw を別マシンで動かす場合
+- **PC** (オプション): StreamDiffusion 用, RTX 2080 Ti 以上
+- **Apple Vision Pro** (オプション): visionOS 1.0+, DualSense Bluetooth ペアリング対応
 - **クラウド API**: Gemini API キー, ElevenLabs API キー（TTS 用）
-- **オプション**: Apple Vision Pro, PC (StreamDiffusion用, RTX 2080 Ti)
 
-### 環境変数
+### ネットワーク設定 (`.env` 一元管理)
+
+IP / ポートはすべて `.env` で集約。リポジトリ直下の `.env.example` をテンプレに、
+各マシン (Vision Pro / JetBot / Jetson ホスト / PC) に `.env` を配置する。
 
 ```bash
-# vlm_watcher.py
-GEMINI_API_KEY=...          # または ~/.openclaw/openclaw.json から自動読み込み
+# テンプレから .env を作成
+cp .env.example .env
+# IP を環境に合わせて編集
+vim .env
+```
 
-# cognitive_loop.py
+主要キー (詳細は `.env.example` 参照):
+
+| キー | 用途 |
+|---|---|
+| `MQTT_HOST` / `MQTT_PORT` | JetBot 上の mosquitto |
+| `CAMERA_URL` / `CAMERA_SNAP_URL` | JetBot MJPEG ストリーム |
+| `STREAM_DIFFUSION_HOST` / `STREAM_DIFFUSION_PORT` | PC GPU サーバー |
+| `COGNITION_HOST` / `JETSON_HOST` | 旧 Jetson ホスト (OpenClaw) |
+| `SHARP_SERVER_URL` | 3DGS sharp server |
+
+**優先順位**: 環境変数 > `.env` > 各スクリプトのフォールバック既定値
+
+**Python 側** (`vp_env.py` がロード):
+- 探索順 — `cwd/.env` → `vp_env.py` 隣 → リポジトリルート
+
+**Swift 側** (`AppConfig.swift` がロード):
+- Bundle 内の `VisionPro/VisionPAL/.env` を起動時に読込
+- Xcode で `.env` と `AppConfig.swift` を Target Membership に追加すること
+
+### デプロイ手順
+
+```bash
+# JetBot (192.168.3.12)
+scp vp_env.py .env JetBot/*.py jetbot@<jetbot-ip>:/home/jetbot/
+
+# Jetson ホスト
+scp vp_env.py .env Controller/dualsense_drive.py haltyt@<jetson-ip>:~/
+
+# PC (StreamDiffusion)
+git clone <repo> && cd VisionPAL && cp .env.example .env  # → .env 編集
+```
+
+### APIキー (`.env` に追加)
+
+```bash
+GEMINI_API_KEY=...          # vlm_watcher.py 用 (または ~/.openclaw/openclaw.json から自動読み込み)
 OPENCLAW_API_URL=http://127.0.0.1:18789
-OPENCLAW_GATEWAY_TOKEN=...  # OpenClaw ゲートウェイトークン
+OPENCLAW_GATEWAY_TOKEN=...
 OPENCLAW_SESSION_KEY=main
 PAL_TTS_METHOD=openclaw     # "openclaw" (ElevenLabs) or "local" (Open JTalk)
 ```
 
-> ⚠️ **API キーやトークンをソースコードにハードコードしないこと。** 環境変数または OpenClaw config 経由で管理する。
+> ⚠️ **API キーや SSH パスワードをソースコードにハードコードしないこと。** `.env` または OpenClaw config 経由で管理する。`.env` は `.gitignore` で除外済み (`.env.example` だけが追跡対象)。
 
 ### 起動
 
@@ -200,7 +250,29 @@ python3 vlm_watcher.py --interval 5
 python3 cognitive_loop.py --monologue-cooldown 10
 # 8. AsyncVLA オーケストレータ（Edge+Cloud統合）
 python3 async_vla.py
+
+# === Jetson ホスト (DualSense USB 直結時) ===
+# DualSense を USB ケーブルで接続後
+python3 ~/dualsense_drive.py
+# → 左スティック: 差動操舵 / R2: ブースト / ×長押し: 停止トグル / ○: 緊急停止
+
+# === Vision Pro ===
+# Xcode で VisionPro/VisionPAL.xcodeproj を開いてビルド
+# DualSense Bluetooth ペアリング後、メインウィンドウをピンチでフォーカス → 左スティックで操縦
 ```
+
+## 操縦方法
+
+| 方式 | レイテンシ | 接続 | 備考 |
+|---|---|---|---|
+| **Vision Pro Bluetooth (DualSense)** | 中 | BT | `.handlesGameControllerEvents(matching: .gamepad)` 必須 (visionOS 仕様) |
+| **Jetson ホスト USB (DualSense)** | 低 | USB ケーブル直結 | `/dev/input/js0` 経由、振動対応 |
+| **JetBot USB (DualSense)** | 低 | USB ケーブル直結 | kernel 4.9 でも generic HID で動作 |
+| **手動 (Vision Pro 画面ボタン)** | 高 | UI | 上下左右 + 停止 |
+| **ヘッドトラッキング** | 中 | Immersive Space | ARKit yaw/pitch → MQTT |
+| **自律探索** | - | - | novelty 欲求が閾値超過で自動発火 |
+
+> 📝 Vision Pro + DualSense Bluetooth は visionOS 1.0 から正式サポート。アナログスティック入力はデフォルトでシステム UI に予約されるため、root view に `.handlesGameControllerEvents(matching: .gamepad)` modifier を必ず付ける ([Apple Forum #805822](https://developer.apple.com/forums/thread/805822))。
 
 ## 関連研究
 
