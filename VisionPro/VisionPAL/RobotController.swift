@@ -11,10 +11,10 @@ class RobotController: ObservableObject {
     @Published var currentDirection: MoveDirection = .stop
     @Published var currentSpeed: Float = 0.0
     
-    // Configuration - ローカルネットワーク
-    let mqttHost = "192.168.3.12"
-    let mqttPort: UInt16 = 1883
-    let cameraURL = URL(string: "http://192.168.3.12:8554/stream")!
+    // Configuration - .env / 環境変数 / 既定値 の優先順 (AppConfig 経由)
+    let mqttHost = AppConfig.mqttHost
+    let mqttPort: UInt16 = AppConfig.mqttPort
+    let cameraURL: URL = AppConfig.cameraURL
     
     private var mqtt: CocoaMQTT?
     private let moveTopic = "vision_pal/move"

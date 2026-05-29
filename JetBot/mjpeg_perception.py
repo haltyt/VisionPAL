@@ -47,12 +47,27 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
 
 
 # === 設定 ===
-PORT = 8554
-FPS = 15
-PERCEPTION_INTERVAL = 2.0  # 物体認識の間隔（秒）
+# --- 設定 (.env / 環境変数 / 既定値) ---
+import sys as _sys
+_sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+try:
+    from vp_env import env, env_int, env_float
+except ImportError:
+    def env(k, d=None): return os.environ.get(k, d)
+    def env_int(k, d):
+        try: return int(os.environ.get(k, d))
+        except (TypeError, ValueError): return d
+    def env_float(k, d):
+        try: return float(os.environ.get(k, d))
+        except (TypeError, ValueError): return d
 
-MQTT_BROKER = "192.168.3.5"
-MQTT_PORT = 1883
+PORT = env_int("CAMERA_PORT", 8554)
+FPS = env_int("CAMERA_FPS", 15)
+PERCEPTION_INTERVAL = env_float("PERCEPTION_INTERVAL", 2.0)  # 物体認識の間隔（秒）
+
+MQTT_BROKER = env("MQTT_HOST", "192.168.3.12")
+MQTT_PORT = env_int("MQTT_PORT", 1883)
 TOPIC_PERCEPTION = "vision_pal/perception/objects"
 
 # DNN SSD モデル (顔検出 → 汎用物体検出に差し替え可能)

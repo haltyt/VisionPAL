@@ -75,7 +75,7 @@ class CognitiveLoop:
         # "openclaw" = OpenClaw TTS API (ElevenLabs)
         # "local" = pal_speak.sh on Jetson host
 
-        # Jetson SSH設定（pal_speak.sh用）
+        # Jetson SSH設定（pal_speak.sh用） — .env: JETSON_HOST / JETSON_USER
         self.jetson_host = os.environ.get("JETSON_HOST", "192.168.3.5")
         self.jetson_user = os.environ.get("JETSON_USER", "haltyt")
 
@@ -372,8 +372,8 @@ class CognitiveLoop:
         """生成された音声ファイルをスピーカーで再生（JetBot USBスピーカー優先、Jetson BTフォールバック）"""
         try:
             # JetBot USBスピーカーで再生を試みる
-            jetbot_host = "192.168.3.8"
-            jetbot_user = "jetbot"
+            jetbot_host = os.environ.get("JETBOT_HOST", "192.168.3.12")
+            jetbot_user = os.environ.get("JETBOT_USER", "jetbot")
             remote_path = "/tmp/pal_cognitive_tts.mp3"
 
             print("[TTS] scp {} -> jetbot".format(media_path), flush=True)

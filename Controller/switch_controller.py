@@ -27,10 +27,21 @@ except ImportError:
     sys.exit(1)
 
 
-# デフォルト設定
-MQTT_BROKER = "192.168.3.5"
-MQTT_PORT = 1883
-MQTT_TOPIC = "vision_pal/move"
+# デフォルト設定 (.env / 環境変数 / 既定値)
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+try:
+    from vp_env import env, env_int
+except ImportError:
+    def env(k, d=None): return _os.environ.get(k, d)
+    def env_int(k, d):
+        try: return int(_os.environ.get(k, d))
+        except (TypeError, ValueError): return d
+
+MQTT_BROKER = env("MQTT_HOST", "192.168.3.12")
+MQTT_PORT = env_int("MQTT_PORT", 1883)
+MQTT_TOPIC = env("MQTT_MOVE_TOPIC", "vision_pal/move")
 
 # スティック設定
 DEADZONE = 0.15          # スティックの遊び

@@ -18,6 +18,7 @@ Requires: NVIDIA GPU (RTX 2060+), CUDA 11.8+
 """
 import argparse
 import io
+import os
 import time
 import threading
 import json
@@ -187,7 +188,8 @@ def toon_filter_pil(pil_image):
 class MJPEGReader:
     """JetBotのMJPEGストリームからフレーム取得"""
     
-    def __init__(self, url="http://192.168.3.8:8554/raw"):
+    def __init__(self, url=None):
+        url = url or os.environ.get("CAMERA_URL", "http://192.168.3.12:8554/raw")
         self.url = url
         self.current_frame = None
         self.lock = threading.Lock()
@@ -241,7 +243,9 @@ mjpeg_reader = MJPEGReader()
 class CognitionSubscriber:
     """Cognition EngineからのMQTTプロンプトを受信"""
 
-    def __init__(self, broker="192.168.3.5", port=1883):
+    def __init__(self, broker=None, port=None):
+        broker = broker or os.environ.get("MQTT_HOST", "192.168.3.12")
+        port = port or int(os.environ.get("MQTT_PORT", "1883"))
         self.broker = broker
         self.port = port
         self.client = None
@@ -619,9 +623,13 @@ STYLE_PRESETS = {
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Vision PAL StreamDiffusion Server")
     parser.add_argument("--host", default="0.0.0.0", help="Server host")
-    parser.add_argument("--port", type=int, default=8555, help="Server port")
+    parser.add_argument("--port", type=int,
+                        default=int(os.environ.get("STREAM_DIFFUSION_PORT", "8555")),
+                        help="Server port (env: STREAM_DIFFUSION_PORT)")
     parser.add_argument("--model", default="KBlueLeaf/kohaku-v2.1", help="SD model")
-    parser.add_argument("--jetbot", default="http://192.168.3.8:8554/raw", help="JetBot MJPEG URL")
+    parser.add_argument("--jetbot",
+                        default=os.environ.get("CAMERA_URL", "http://192.168.3.12:8554/raw"),
+                        help="JetBot MJPEG URL (env: CAMERA_URL)")
     parser.add_argument("--no-gpu", action="store_true", help="CPU/toon filter only")
     args = parser.parse_args()
     

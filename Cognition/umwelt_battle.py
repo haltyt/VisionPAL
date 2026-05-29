@@ -399,7 +399,7 @@ def main():
 
     # Get image
     if args.live:
-        snap_url = "http://192.168.3.8:8554/snap"
+        snap_url = os.environ.get("CAMERA_SNAP_URL", "http://192.168.3.12:8554/snap")
         img_path = "/tmp/battle_snap.jpg"
         try:
             resp = urllib.request.urlopen(snap_url, timeout=5)

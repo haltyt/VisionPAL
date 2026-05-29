@@ -310,8 +310,10 @@ class BattleServer:
 
 def main():
     parser = argparse.ArgumentParser(description="Umwelt Battle MQTT Server")
-    parser.add_argument("--broker", default="192.168.3.5", help="MQTT broker host")
-    parser.add_argument("--port", type=int, default=1883, help="MQTT broker port")
+    parser.add_argument("--broker", default=os.environ.get("MQTT_HOST", "192.168.3.12"),
+                        help="MQTT broker host (env: MQTT_HOST)")
+    parser.add_argument("--port", type=int, default=int(os.environ.get("MQTT_PORT", "1883")),
+                        help="MQTT broker port (env: MQTT_PORT)")
     parser.add_argument("--image", default="/tmp/jetbot_snap.jpg", help="Default image path")
     args = parser.parse_args()
 

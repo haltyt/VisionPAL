@@ -19,8 +19,19 @@ except ImportError:
     from BaseHTTPServer import HTTPServer
     from BaseHTTPServer import BaseHTTPRequestHandler
 
-PORT = 8554
-FPS = 15
+# === 設定 (.env / 環境変数 / 既定値) ===
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+try:
+    from vp_env import env_int
+except ImportError:
+    def env_int(k, d):
+        try: return int(_os.environ.get(k, d))
+        except (TypeError, ValueError): return d
+
+PORT = env_int("CAMERA_PORT", 8554)
+FPS = env_int("CAMERA_FPS", 15)
 
 # グローバルフレーム
 current_frame = None
@@ -193,9 +204,8 @@ if __name__ == "__main__":
     time.sleep(2)
 
     print("[HTTP] Starting server on port {}...".format(PORT))
-    print("[HTTP] Toon:  http://192.168.3.8:{}/stream".format(PORT))
-    print("[HTTP] Raw:   http://192.168.3.8:{}/raw".format(PORT))
-    print("[HTTP] View:  http://192.168.3.8:{}/".format(PORT))
+    print("[HTTP] View at http://0.0.0.0:{}".format(PORT))
+    print("[HTTP] Endpoints: /stream /raw /snap /status")
 
     server = HTTPServer(('0.0.0.0', PORT), MJPEGHandler)
     try:

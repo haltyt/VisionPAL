@@ -79,7 +79,7 @@ class MonsterARController: ObservableObject {
     private var lastEmotionChange = Date()
     private let minChangeInterval: TimeInterval = 3.0 // 最低3秒は同じモンスター表示
     
-    init(mqttHost: String = "192.168.3.5", mqttPort: UInt16 = 1883) {
+    init(mqttHost: String = AppConfig.cognitionHost, mqttPort: UInt16 = AppConfig.cognitionPort) {
         self.mqttHost = mqttHost
         self.mqttPort = mqttPort
         setupMQTT()

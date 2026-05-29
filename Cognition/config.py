@@ -1,8 +1,21 @@
-"""Vision PAL Cognition Engine - Configuration"""
+"""Vision PAL Cognition Engine - Configuration
 
-# MQTT
-MQTT_BROKER = "192.168.3.5"
-MQTT_PORT = 1883
+ネットワーク値は .env / 環境変数から読む。詳細は ../vp_env.py 参照。
+"""
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+try:
+    from vp_env import env, env_int
+except ImportError:
+    def env(k, d=None): return _os.environ.get(k, d)
+    def env_int(k, d):
+        try: return int(_os.environ.get(k, d))
+        except (TypeError, ValueError): return d
+
+# MQTT (.env: MQTT_HOST / MQTT_PORT)
+MQTT_BROKER = env("MQTT_HOST", "192.168.3.12")
+MQTT_PORT = env_int("MQTT_PORT", 1883)
 
 # MQTT Topics
 TOPIC_PERCEPTION = "vision_pal/perception/objects"
@@ -25,9 +38,9 @@ TOPIC_SURVIVAL_ACTION = "vision_pal/survival/action"  # survival engine → auto
 TOPIC_EDGE = "vision_pal/edge/state"           # Edge層 → CNN予測状態
 TOPIC_VLA = "vision_pal/vla/state"             # VLAオーケストレータ → 統合状態
 
-# JetBot Camera
-MJPEG_URL = "http://192.168.3.8:8554/stream"
-SNAPSHOT_URL = "http://192.168.3.8:8554/snapshot"
+# JetBot Camera (.env: CAMERA_URL / CAMERA_SNAP_URL)
+MJPEG_URL = env("CAMERA_URL", "http://192.168.3.12:8554/stream")
+SNAPSHOT_URL = env("CAMERA_SNAP_URL", "http://192.168.3.12:8554/snapshot")
 
 # Cognition cycle
 CYCLE_INTERVAL = 2.0  # seconds

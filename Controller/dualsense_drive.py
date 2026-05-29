@@ -20,18 +20,32 @@ import binascii
 
 import paho.mqtt.client as mqtt
 
-# --- 設定 ---
-JS_DEVICE = "/dev/input/js0"
-MQTT_BROKER = "192.168.3.5"
-MQTT_PORT = 1883
-MQTT_TOPIC = "vision_pal/move"
+# --- 設定 (.env / 環境変数 / 既定値) ---
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+try:
+    from vp_env import env, env_int, env_float
+except ImportError:
+    def env(k, d=None): return _os.environ.get(k, d)
+    def env_int(k, d):
+        try: return int(_os.environ.get(k, d))
+        except (TypeError, ValueError): return d
+    def env_float(k, d):
+        try: return float(_os.environ.get(k, d))
+        except (TypeError, ValueError): return d
+
+JS_DEVICE = env("JS_DEVICE", "/dev/input/js0")
+MQTT_BROKER = env("MQTT_HOST", "192.168.3.12")
+MQTT_PORT = env_int("MQTT_PORT", 1883)
+MQTT_TOPIC = env("MQTT_MOVE_TOPIC", "vision_pal/move")
 
 # スティック設定
-DEADZONE = 5000       # スティック中央の不感帯
-BASE_SPEED = 0.25      # 通常速度 (0.0-1.0)
-BOOST_SPEED = 0.4     # ブースト速度
-SEND_INTERVAL = 0.1   # MQTT送信間隔(秒)
-HIDRAW_DEVICE = "/dev/hidraw1"  # DualSense hidraw
+DEADZONE = env_int("STICK_DEADZONE", 5000)              # スティック中央の不感帯
+BASE_SPEED = env_float("DUALSENSE_BASE_SPEED", 0.25)     # 通常速度 (0.0-1.0)
+BOOST_SPEED = env_float("DUALSENSE_BOOST_SPEED", 0.4)    # ブースト速度
+SEND_INTERVAL = env_float("DUALSENSE_SEND_INTERVAL", 0.1)  # MQTT送信間隔(秒)
+HIDRAW_DEVICE = env("HIDRAW_DEVICE", "/dev/hidraw1")     # DualSense hidraw
 
 # DualSense (Linux HID) ボタン/軸マッピング
 # 軸: 0=LX, 1=LY, 2=RX, 3=RY, 4=L2, 5=R2

@@ -14,9 +14,9 @@ class VoiceStyleController: ObservableObject {
     @Published var isStreamDiffusionEnabled = false
     
     // MARK: - Configuration
-    /// StreamDiffusion APIサーバーURL（ハルトのPC）
-    var streamDiffusionHost = "192.168.3.7"  // ハルトのPC (RTX 2080Ti)
-    var streamDiffusionPort = 8555
+    /// StreamDiffusion APIサーバー (.env / 環境変数 / 既定値)
+    var streamDiffusionHost = AppConfig.streamDiffusionHost
+    var streamDiffusionPort = AppConfig.streamDiffusionPort
     
     var streamDiffusionBaseURL: URL {
         URL(string: "http://\(streamDiffusionHost):\(streamDiffusionPort)")!

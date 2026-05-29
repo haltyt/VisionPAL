@@ -244,6 +244,6 @@ enum ScanError: LocalizedError {
 // MARK: - Preview
 
 #Preview(windowStyle: .volumetric) {
-    SplatSceneView(sharpServerURL: URL(string: "http://192.168.3.5:8080")!)
+    SplatSceneView(sharpServerURL: AppConfig.sharpServerURL)
         .environmentObject(RobotController())
 }

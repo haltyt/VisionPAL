@@ -94,11 +94,19 @@ open VisionPAL.xcodeproj
 
 ### ネットワーク設定
 
-- **MQTT ブローカー**: 192.168.3.5:1883 (Jetson Nano)
-- **JetBot カメラ**: http://192.168.3.8:8554/stream
-- **StreamDiffusion**: http://192.168.3.xxx:8555/stream (PC)
+IP / ポートはすべて **`.env` ファイルで一元管理**:
+- リポジトリルート `.env.example` をコピーして `.env` 作成 (各マシン用)
+- Swift 側: `VisionPro/VisionPAL/.env` → `AppConfig.swift` 経由
+- Python 側: リポジトリルート `.env` → `vp_env.py` 経由
 
-設定変更は `RobotController.swift` を編集。
+主要キー (`.env.example` 参照):
+- `MQTT_HOST` / `MQTT_PORT` — JetBot 上の mosquitto
+- `CAMERA_URL` / `CAMERA_SNAP_URL` — JetBot MJPEG
+- `STREAM_DIFFUSION_HOST` / `STREAM_DIFFUSION_PORT` — PC GPU
+- `COGNITION_HOST` / `JETSON_HOST` — 旧 Jetson ホスト (OpenClaw)
+- `SHARP_SERVER_URL` — 3DGS sharp server
+
+優先順位: 環境変数 > `.env` > 各スクリプトのフォールバック既定値
 
 ## よくあるタスク
 

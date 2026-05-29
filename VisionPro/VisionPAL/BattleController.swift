@@ -105,7 +105,7 @@ class BattleController: ObservableObject {
     let mqttHost: String
     let mqttPort: UInt16
 
-    init(mqttHost: String = "192.168.3.5", mqttPort: UInt16 = 1883) {
+    init(mqttHost: String = AppConfig.cognitionHost, mqttPort: UInt16 = AppConfig.cognitionPort) {
         self.mqttHost = mqttHost
         self.mqttPort = mqttPort
         setupMQTT()
