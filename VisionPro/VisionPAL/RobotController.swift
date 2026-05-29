@@ -12,9 +12,9 @@ class RobotController: ObservableObject {
     @Published var currentSpeed: Float = 0.0
     
     // Configuration - ローカルネットワーク
-    let mqttHost = "192.168.3.5"
+    let mqttHost = "192.168.3.12"
     let mqttPort: UInt16 = 1883
-    let cameraURL = URL(string: "http://192.168.3.8:8554/stream")!
+    let cameraURL = URL(string: "http://192.168.3.12:8554/stream")!
     
     private var mqtt: CocoaMQTT?
     private let moveTopic = "vision_pal/move"
@@ -64,14 +64,45 @@ class RobotController: ObservableObject {
     func move(direction: MoveDirection, speed: Float = 0.5) {
         currentDirection = direction
         currentSpeed = speed
-        
+
         let payload: [String: Any] = [
             "direction": direction.rawValue,
             "speed": speed
         ]
-        
+
         if let data = try? JSONSerialization.data(withJSONObject: payload),
            let json = String(data: data, encoding: .utf8) {
+            mqtt?.publish(moveTopic, withString: json, qos: .qos0)
+        }
+    }
+
+    /// 差動操舵 (タンク式) コマンド送信 - DualSenseスティック用
+    func moveTank(left: Float, right: Float, label: String) {
+        let mag = max(abs(left), abs(right))
+        DispatchQueue.main.async {
+            self.currentSpeed = mag
+            switch label {
+            case "forward", "forward-left", "forward-right":
+                self.currentDirection = .forward
+            case "backward", "backward-left", "backward-right":
+                self.currentDirection = .backward
+            case "left":  self.currentDirection = .left
+            case "right": self.currentDirection = .right
+            default:      self.currentDirection = .stop
+            }
+        }
+
+        let payload: [String: Any] = [
+            "direction": label,
+            "speed": mag,
+            "left_speed": left,
+            "right_speed": right
+        ]
+        if let data = try? JSONSerialization.data(withJSONObject: payload),
+           let json = String(data: data, encoding: .utf8) {
+            let connected = mqtt?.connState == .connected
+            print(String(format: "[MQTT TX] %@ L=%.2f R=%.2f connected=%@",
+                         label, left, right, connected ? "Y" : "N"))
             mqtt?.publish(moveTopic, withString: json, qos: .qos0)
         }
     }

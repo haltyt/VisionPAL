@@ -1,4 +1,5 @@
 import SwiftUI
+import GameController
 
 struct ContentView: View {
     @EnvironmentObject var robot: RobotController
@@ -6,6 +7,7 @@ struct ContentView: View {
     @EnvironmentObject var effectController: EmotionEffectController
     @EnvironmentObject var battleController: BattleController
     @EnvironmentObject var monsterARController: MonsterARController
+    @EnvironmentObject var gameController: GameControllerManager
     @Environment(\.openImmersiveSpace) var openImmersiveSpace
     @Environment(\.dismissImmersiveSpace) var dismissImmersiveSpace
     @Environment(\.openWindow) var openWindow
@@ -32,13 +34,33 @@ struct ContentView: View {
                     .bold()
                 
                 // Connection Status
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(robot.isConnected ? .green : .red)
-                        .frame(width: 12, height: 12)
-                    Text(robot.isConnected ? "MQTT Connected" : "Disconnected")
-                        .foregroundColor(.secondary)
-                        .font(.caption)
+                HStack(spacing: 16) {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(robot.isConnected ? .green : .red)
+                            .frame(width: 10, height: 10)
+                        Text(robot.isConnected ? "MQTT" : "MQTT off")
+                            .foregroundColor(.secondary)
+                            .font(.caption)
+                    }
+                    Button {
+                        gameController.reattachCurrentController()
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: gameController.isConnected ? "gamecontroller.fill" : "gamecontroller")
+                                .foregroundColor(gameController.isConnected ? .green : .secondary)
+                                .font(.caption)
+                            Text(gameController.isConnected
+                                 ? (gameController.isPaused ? "Paused" : gameController.controllerName)
+                                 : "No controller")
+                                .foregroundColor(.secondary)
+                                .font(.caption)
+                            Image(systemName: "arrow.clockwise")
+                                .font(.caption2)
+                                .foregroundColor(.blue)
+                        }
+                    }
+                    .buttonStyle(.plain)
                 }
                 
                 if isCurvedMode {
@@ -157,6 +179,7 @@ struct ContentView: View {
         }
         .padding(40)
         .preferredSurroundingsEffect(.dark)
+        .handlesGameControllerEvents(matching: .gamepad)  // visionOSでスティック入力をアプリに通すために必須
         .onAppear {
             voiceStyle.requestPermissions()
             currentCameraURL = desiredCameraURL

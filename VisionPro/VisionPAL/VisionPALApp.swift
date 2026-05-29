@@ -3,11 +3,18 @@ import CompositorServices
 
 @main
 struct VisionPALApp: App {
-    @StateObject private var robotController = RobotController()
+    @StateObject private var robotController: RobotController
     @StateObject private var voiceStyleController = VoiceStyleController()
     @StateObject private var effectController = EmotionEffectController()
     @StateObject private var battleController = BattleController()
     @StateObject private var monsterARController = MonsterARController()
+    @StateObject private var gameController: GameControllerManager
+
+    init() {
+        let robot = RobotController()
+        _robotController = StateObject(wrappedValue: robot)
+        _gameController = StateObject(wrappedValue: GameControllerManager(robot: robot))
+    }
 
     var body: some Scene {
         WindowGroup {
@@ -17,6 +24,7 @@ struct VisionPALApp: App {
                 .environmentObject(effectController)
                 .environmentObject(battleController)
                 .environmentObject(monsterARController)
+                .environmentObject(gameController)
         }
 
         // Battle window (open separately)
