@@ -409,7 +409,8 @@ class EdgeLayer:
 
             # MQTT: 緊急停止コマンド
             self._publish(TOPIC_MOVE, {
-                "action": "stop",
+                "direction": "stop",
+                "speed": 0.0,
                 "source": "edge_layer",
                 "reason": "collision_{}".format(result.get("severity", "detected")),
             })

@@ -4,11 +4,11 @@
 
 ## 概要
 
-Vision PAL は、JetBot（Jetson Nano）に搭載されたカメラ映像を VLM（Vision Language Model）で解析し、感情・記憶・独白を自律的に生成するシステムです。ダマシオのソマティック・マーカー仮説に基づく Survival Engine が身体信号から欲求を計算し、LLM の認知をホメオスタシスで修飾します。**AsyncVLA（非同期VLA）二層アーキテクチャ**により、高速な安全判断（Edge層 5ms）と戦略的な認知判断（Cloud層 5-10秒）を同時に実現します。Apple Vision Pro と組み合わせて、AI の内面世界を AR で可視化するインスタレーション作品としても機能します。
+Vision PAL は、JetBot（Jetson Nano）に搭載されたカメラ映像を VLM（Vision Language Model）で解析し、感情・記憶・独白を自律的に生成するシステムです。ダマシオのソマティック・マーカー仮説に基づく Survival Engine が身体信号から欲求を計算し、LLM の認知をホメオスタシスで修飾します。**AsyncVLA（非同期VLA）三層アーキテクチャ**により、高速な安全判断（Edge層）、前言語的なセンサーモーター反射（Neural層）、戦略的な認知判断（Cloud層）を同時に実現します。Apple Vision Pro と組み合わせて、AI の内面世界を AR で可視化するインスタレーション作品としても機能します。
 
 ## AsyncVLA アーキテクチャ
 
-AsyncVLA（非同期 Vision-Language-Action）は、高速な Edge 層と戦略的な Cloud 層を非同期に統合する二層アーキテクチャです。[arXiv:2602.13476](https://arxiv.org/abs/2602.13476) の Edge Adapter 概念に着想を得ています。
+AsyncVLA（非同期 Vision-Language-Action）は、高速な Edge 層、Connectome-inspired Neural層、戦略的な Cloud 層を非同期に統合する三層アーキテクチャです。[arXiv:2602.13476](https://arxiv.org/abs/2602.13476) の Edge Adapter 概念に着想を得ています。
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -59,7 +59,12 @@ VisionPAL/
 │   ├── survival_engine.py     生存エンジン（6欲求ホメオスタシス）
 │   ├── affect.py              感情システム（valence/arousal）
 │   ├── scene_memory.py        シーン記憶（新規/既知判定、N-gram+Jaccard）
-│   ├── async_vla.py           AsyncVLAオーケストレータ（二層統合）
+│   ├── async_vla.py           AsyncVLAオーケストレータ（三層統合）
+│   ├── connectome/             前言語的な神経・身体制御レイヤー
+│   │   ├── sensory_encoder.py  Optical Flow/looming抽出
+│   │   ├── neural_dynamics.py  7集団のLIF神経回路（既定672ニューロン）
+│   │   ├── connectome_backend.py 差し替え可能な脳バックエンド
+│   │   └── mqtt_connectome.py  カメラ・身体状態・MQTTブリッジ
 │   ├── explore_behavior.py    自律探索行動（novelty駆動）
 │   ├── vla_test.py            VLAパイプライン単体テスト
 │   ├── vla_test_v2.py         AsyncVLA二層統合テスト
@@ -156,6 +161,10 @@ idle 5分+ → novelty蓄積 → novelty > 0.8 → explore アクション発火
 | `vision_pal/explore/state` | explore_behavior → | 探索状態 |
 | `vision_pal/edge/state` | collision_detect_v2 → async_vla | Edge層CNN予測状態 |
 | `vision_pal/vla/state` | async_vla → | VLA統合状態 |
+| `vision_pal/neural/sensory` | connectome → | 左右運動・looming・輝度・コントラスト |
+| `vision_pal/neural/activity` | connectome → | 神経集団活動とmotor activity |
+| `vision_pal/neural/action` | connectome → async_vla | 回避反射の提案（モーターへ直送しない） |
+| `vision_pal/neural/modulation` | LLM/Survival → connectome | exploration/threat修飾値（任意） |
 | `vision_pal/move` | async_vla/explore/VisionPro → mqtt_robot | モーター制御 |
 | `vision_pal/monologue` | cognitive_loop → | 生成された独白 |
 | `vision_pal/affect/state` | cognitive_loop → | 感情状態 |
@@ -248,8 +257,14 @@ python3 ~/explore_behavior.py
 python3 vlm_watcher.py --interval 5
 # 7. Cognition Engine
 python3 cognitive_loop.py --monologue-cooldown 10
-# 8. AsyncVLA オーケストレータ（Edge+Cloud統合）
+# 8. AsyncVLA オーケストレータ（Edge+Neural+Cloud統合）
 python3 async_vla.py
+
+# 9. Connectome-inspired Neural層（別プロセス）
+# リポジトリルートから実行。最初は必ずモーターなしで確認する。
+python3 -m Cognition.connectome.mqtt_connectome --source "$CAMERA_URL" --no-mqtt
+# 出力を確認後、MQTT接続を有効化（指令はAsyncVLAが調停）
+python3 -m Cognition.connectome.mqtt_connectome --source "$CAMERA_URL"
 
 # === Jetson ホスト (DualSense USB 直結時) ===
 # DualSense を USB ケーブルで接続後

@@ -38,6 +38,12 @@ TOPIC_SURVIVAL_ACTION = "vision_pal/survival/action"  # survival engine → auto
 TOPIC_EDGE = "vision_pal/edge/state"           # Edge層 → CNN予測状態
 TOPIC_VLA = "vision_pal/vla/state"             # VLAオーケストレータ → 統合状態
 
+# Connectome-inspired neural layer topics
+TOPIC_NEURAL_SENSORY = "vision_pal/neural/sensory"
+TOPIC_NEURAL_ACTIVITY = "vision_pal/neural/activity"
+TOPIC_NEURAL_ACTION = "vision_pal/neural/action"
+TOPIC_NEURAL_MODULATION = "vision_pal/neural/modulation"
+
 # JetBot Camera (.env: CAMERA_URL / CAMERA_SNAP_URL)
 MJPEG_URL = env("CAMERA_URL", "http://192.168.3.12:8554/stream")
 SNAPSHOT_URL = env("CAMERA_SNAP_URL", "http://192.168.3.12:8554/snapshot")

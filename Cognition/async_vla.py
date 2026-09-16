@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Vision PAL - AsyncVLA Orchestrator
-二層非同期VLAアーキテクチャのオーケストレータ。
+三層非同期VLAアーキテクチャのオーケストレータ。
 
 Edge層（5-50ms、JetBot側）:
   collision_detect_v2.py — CNN予測で即座に回避
 
 Cloud層（5-10秒、Jetson/コンテナ側）:
   vlm_watcher.py → cognitive_loop.py → survival_engine.py → 戦略的行動
+
+Neural層（約15-30Hz、Jetson/コンテナ側）:
+  optical flow/looming → LIF神経回路 → sensorimotor reflex
 
 このモジュールは両層を統合し、行動の優先度を調停する。
 Edge層の安全判断はCloud層を常にオーバーライドする。
@@ -39,6 +42,7 @@ MQTT Topics:
     vision_pal/survival/state      ← Survival Engine欲求
     vision_pal/survival/action     ← 自律行動指示
     vision_pal/perception/scene    ← VLMシーン
+    vision_pal/neural/action       ← 神経層の回避提案
   Publish:
     vision_pal/vla/state           ← VLA統合状態
     vision_pal/move                ← 最終行動指示
@@ -74,6 +78,7 @@ PRIORITY = {
     "retreat": 90,           # Survival: safety urgent
     "cool_down": 80,         # Survival: thermal urgent
     "seek_energy": 70,       # Survival: energy urgent
+    "neural_reflex": 65,     # Connectome: sensorimotor avoidance
     "avoid": 60,             # Edge: danger zone (blocked > 0.5)
     "explore": 40,           # Survival: novelty urgent
     "seek_social": 30,       # Survival: social urgent
@@ -84,9 +89,9 @@ PRIORITY = {
 
 # Edge→モーター変換
 EDGE_ACTIONS = {
-    "emergency_stop": {"action": "stop", "speed": 0, "duration": 0},
-    "retreat": {"action": "backward", "speed": 150, "duration": 1.0},
-    "avoid": {"action": "left", "speed": 120, "duration": 0.5},
+    "emergency_stop": {"direction": "stop", "speed": 0.0, "duration": 0},
+    "retreat": {"direction": "backward", "speed": 0.5, "duration": 1.0},
+    "avoid": {"direction": "left", "speed": 0.4, "duration": 0.5},
 }
 
 running = True
@@ -150,7 +155,7 @@ class ActionArbiter:
 
 
 class AsyncVLAOrchestrator:
-    """AsyncVLA二層統合オーケストレータ"""
+    """AsyncVLA三層統合オーケストレータ"""
 
     def __init__(self, cloud_enabled=True):
         self.cloud_enabled = cloud_enabled
@@ -169,6 +174,12 @@ class AsyncVLAOrchestrator:
             "drives": {},
             "dominant_drive": "none",
             "actions": [],
+        }
+
+        self.neural_state = {
+            "direction": "forward",
+            "confidence": 0.0,
+            "reason": "not_started",
         }
 
         # VLA統合状態
@@ -199,6 +210,9 @@ class AsyncVLAOrchestrator:
         client.subscribe("vision_pal/edge/state")
         client.subscribe(cfg.TOPIC_COLLISION)
 
+        # Neural / Connectome層
+        client.subscribe(cfg.TOPIC_NEURAL_ACTION)
+
         # Cloud層
         client.subscribe(cfg.TOPIC_SURVIVAL)
         client.subscribe(cfg.TOPIC_SURVIVAL_ACTION)
@@ -206,6 +220,7 @@ class AsyncVLAOrchestrator:
 
         client.message_callback_add("vision_pal/edge/state", self._on_edge)
         client.message_callback_add(cfg.TOPIC_COLLISION, self._on_collision)
+        client.message_callback_add(cfg.TOPIC_NEURAL_ACTION, self._on_neural_action)
         client.message_callback_add(cfg.TOPIC_SURVIVAL, self._on_survival)
         client.message_callback_add(cfg.TOPIC_SURVIVAL_ACTION, self._on_survival_action)
         client.message_callback_add(cfg.TOPIC_SCENE, self._on_scene)
@@ -248,6 +263,21 @@ class AsyncVLAOrchestrator:
                     data.get("blocked_prob", 0),
                 ))
         except Exception:
+            pass
+
+    def _on_neural_action(self, client, userdata, msg):
+        """Connectome層の反射提案。モーターへは直送せずarbiterを通す。"""
+        try:
+            data = json.loads(msg.payload)
+            direction = data.get("direction", "stop")
+            confidence = float(data.get("confidence", 0.0))
+            if direction not in ("left", "right", "backward", "stop"):
+                return
+            if not data.get("reflex", False) or confidence < 0.2:
+                return
+            self.neural_state = data
+            self.arbiter.propose("connectome", "neural_reflex", data, ttl=0.75)
+        except (TypeError, ValueError):
             pass
 
     # ── Cloud層イベント ──
@@ -306,6 +336,22 @@ class AsyncVLAOrchestrator:
             self.mqtt.publish(cfg.TOPIC_MOVE, json.dumps(move_cmd, ensure_ascii=False))
             return
 
+        if action_type == "neural_reflex":
+            details = action.get("details", {})
+            direction = details.get("direction", "stop")
+            if direction not in ("left", "right", "backward", "stop"):
+                direction = "stop"
+            move_cmd = {
+                "direction": direction,
+                "speed": max(0.0, min(1.0, float(details.get("speed", 0.35)))),
+                "duration": max(0.0, min(2.0, float(details.get("duration", 0.4)))),
+                "source": "connectome",
+                "reason": details.get("reason", "neural_reflex"),
+                "confidence": details.get("confidence", 0.0),
+            }
+            self.mqtt.publish(cfg.TOPIC_MOVE, json.dumps(move_cmd, ensure_ascii=False))
+            return
+
         # Survival系アクション → explore_behaviorに委譲
         if action_type in ("explore", "seek_social"):
             self.mqtt.publish(cfg.TOPIC_SURVIVAL_ACTION,
@@ -316,13 +362,13 @@ class AsyncVLAOrchestrator:
         if action_type == "cloud_action":
             vlm_action = action.get("details", {}).get("vlm_action", "stop")
             move_map = {
-                "forward": {"action": "forward", "speed": 100, "duration": 1.0},
-                "stop": {"action": "stop", "speed": 0, "duration": 0},
-                "turn_left": {"action": "left", "speed": 100, "duration": 0.5},
-                "turn_right": {"action": "right", "speed": 100, "duration": 0.5},
-                "reverse": {"action": "backward", "speed": 100, "duration": 0.5},
+                "forward": {"direction": "forward", "speed": 0.4, "duration": 1.0},
+                "stop": {"direction": "stop", "speed": 0.0, "duration": 0},
+                "turn_left": {"direction": "left", "speed": 0.4, "duration": 0.5},
+                "turn_right": {"direction": "right", "speed": 0.4, "duration": 0.5},
+                "reverse": {"direction": "backward", "speed": 0.4, "duration": 0.5},
             }
-            move_cmd = move_map.get(vlm_action, {"action": "stop", "speed": 0, "duration": 0})
+            move_cmd = move_map.get(vlm_action, {"direction": "stop", "speed": 0.0, "duration": 0})
             move_cmd["source"] = "async_vla_cloud"
             self.mqtt.publish(cfg.TOPIC_MOVE, json.dumps(move_cmd, ensure_ascii=False))
 
@@ -335,8 +381,17 @@ class AsyncVLAOrchestrator:
 
         # 新しい行動 or 変化があれば実行
         if action["type"] != "idle":
-            if (self.last_action is None or
-                    self.last_action["type"] != action["type"]):
+            action_key = (
+                action["type"],
+                action.get("details", {}).get("direction"),
+                action.get("details", {}).get("vlm_action"),
+            )
+            last_key = None if self.last_action is None else (
+                self.last_action["type"],
+                self.last_action.get("details", {}).get("direction"),
+                self.last_action.get("details", {}).get("vlm_action"),
+            )
+            if last_key != action_key:
                 self._execute_action(action)
                 self.last_action = action
 
@@ -350,6 +405,16 @@ class AsyncVLAOrchestrator:
                 # 直近20件のみ保持
                 self.action_log = self.action_log[-20:]
         else:
+            # Direct motor actions must end explicitly because mqtt_robot keeps
+            # the last command; its payload duration is metadata only.
+            if self.last_action and self.last_action["type"] in (
+                    "emergency_stop", "retreat", "avoid", "neural_reflex", "cloud_action"):
+                self.mqtt.publish(cfg.TOPIC_MOVE, json.dumps({
+                    "direction": "stop",
+                    "speed": 0.0,
+                    "source": "async_vla_ttl",
+                    "reason": "action_expired",
+                }))
             self.last_action = None
 
         # VLA統合状態をpublish（2秒ごと）
@@ -365,6 +430,11 @@ class AsyncVLAOrchestrator:
                     "dominant_drive": self.cloud_state.get("dominant_drive", "none"),
                     "scene_summary": self.cloud_state.get("scene", {}).get("summary", ""),
                 },
+                "neural": {
+                    "direction": self.neural_state.get("direction", "forward"),
+                    "confidence": self.neural_state.get("confidence", 0.0),
+                    "reason": self.neural_state.get("reason", ""),
+                },
                 "current_action": action["type"],
                 "action_source": action.get("source", "none"),
                 "action_priority": action["priority"],
@@ -376,9 +446,10 @@ class AsyncVLAOrchestrator:
     def run(self, interval=0.5):
         """メインループ"""
         print("=" * 55)
-        print("🧠 AsyncVLA Orchestrator")
+        print("🧠 AsyncVLA Orchestrator (Edge + Neural + Cloud)")
         print("=" * 55)
         print("  Edge層: collision_detect_v2.py (CNN 5ms)")
+        print("  Neural層: optical flow + LIF connectome (15-30Hz)")
         print("  Cloud層: vlm_watcher + survival_engine (5-10s)")
         print("  Arbiter: safety > explore > social > idle")
         print("  Interval: {}ms".format(int(interval * 1000)))
