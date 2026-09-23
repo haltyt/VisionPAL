@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VisionPAL Simulator</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27%3E%3Ccircle cx=%278%27 cy=%278%27 r=%277%27 fill=%27%234fa3ff%27/%3E%3C/svg%3E">
+<style>
+:root {
+  --bg: #0f1216; --panel: #171b21; --panel2: #1e232b; --line: #2a313b;
+  --text: #e6e9ee; --muted: #8a94a3; --accent: #4fa3ff; --ok: #3ecf8e;
+  --warn: #f5b041; --bad: #ef5b5b; --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.45 system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; }
+header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+header h1 { font-size: 16px; margin: 0 8px 0 0; letter-spacing: .02em; }
+.badge { font: 12px var(--mono); padding: 3px 8px; border-radius: 999px; background: var(--panel2);
+  border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.badge.ok { color: var(--ok); border-color: #2d5c47; }
+.badge.bad { color: var(--bad); border-color: #6b3131; }
+.spacer { flex: 1; }
+button { font: inherit; color: var(--text); background: var(--panel2); border: 1px solid var(--line);
+  border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+main { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 14px; padding: 14px 16px; }
+@media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; min-width: 0; }
+.card h2 { font-size: 12px; font-weight: 600; margin: 0 0 8px; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .08em; display: flex; justify-content: space-between; gap: 8px; }
+.card h2 .age { font: 11px var(--mono); text-transform: none; letter-spacing: 0; }
+#map { width: 100%; display: block; border-radius: 8px; background: #0b0d10; cursor: crosshair; }
+.hint { color: var(--muted); font-size: 12px; margin-top: 6px; }
+#fpv { width: 100%; aspect-ratio: 4 / 3; display: block; border-radius: 8px; background: #000; object-fit: cover; }
+.col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.drive { display: grid; grid-template-columns: repeat(3, 56px); gap: 6px; justify-content: start; }
+.drive button { height: 44px; font-size: 18px; padding: 0; }
+.drive-row { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
+.layers { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; }
+.layer { background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 10px; min-width: 0; }
+.layer.stale { opacity: .45; }
+.layer .title { display: flex; justify-content: space-between; font-weight: 600; font-size: 13px; margin-bottom: 6px; }
+.layer .title .age { font: 11px var(--mono); color: var(--muted); font-weight: 400; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; font: 12px var(--mono); }
+.kv .k { color: var(--muted); }
+.kv .v { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar { height: 6px; background: #0b0d10; border-radius: 3px; overflow: hidden; margin: 3px 0 6px; }
+.bar > i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .15s; }
+.big { font: 600 18px var(--mono); }
+.scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font: 12px var(--mono); }
+td, th { text-align: left; padding: 3px 6px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { color: var(--muted); font-weight: 500; }
+.src-jev { color: #c89bff; } .src-connectome { color: #5fd3c7; } .src-edge_layer, .src-imu_auto_stop { color: var(--bad); }
+.src-sim_ui { color: var(--warn); } .src-async_vla, .src-async_vla_ttl { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>VisionPAL Simulator</h1>
+  <span class="badge" id="b-mqtt">MQTT —</span>
+  <span class="badge" id="b-time">t=0s</span>
+  <span class="badge" id="b-render">render —</span>
+  <span class="badge" id="b-stats">dist 0m · bumps 0</span>
+  <span class="spacer"></span>
+  <button id="btn-pause">一時停止</button>
+  <button id="btn-reset" title="同じシードで作り直す">リセット</button>
+  <button id="btn-random" title="新しい部屋を生成">ランダム配置</button>
+  <button id="btn-recharge">充電</button>
+</header>
+
+<main>
+  <div class="col">
+    <section class="card">
+      <h2>俯瞰マップ <span class="age" id="seed"></span></h2>
+      <canvas id="map" width="800" height="600"></canvas>
+      <div class="hint">クリック: 箱を置く ／ Shift+クリック: 箱を消す ／ Alt+クリック: ロボットを移動</div>
+    </section>
+    <section class="card">
+      <h2>モーター指令ログ <span class="age">vision_pal/move</span></h2>
+      <div class="scroll"><table><thead><tr><th>time</th><th>dir</th><th>speed</th><th>source</th><th>reason</th></tr></thead>
+        <tbody id="log"></tbody></table></div>
+    </section>
+  </div>
+
+  <div class="col">
+    <section class="card">
+      <h2>カメラ (FPV) <span class="age">/stream</span></h2>
+      <img id="fpv" src="/stream" alt="simulated JetBot camera">
+    </section>
+    <section class="card">
+      <h2>手動操縦 <span class="age">WASD / 矢印キー · Space 停止</span></h2>
+      <div class="drive-row">
+        <div class="drive">
+          <span></span><button data-dir="forward">▲</button><span></span>
+          <button data-dir="left">◀</button><button data-dir="stop">■</button><button data-dir="right">▶</button>
+          <span></span><button data-dir="backward">▼</button><span></span>
+        </div>
+        <label>速度 <input type="range" id="speed" min="0.1" max="1" step="0.05" value="0.4">
+          <span id="speed-v">0.40</span></label>
+      </div>
+      <div class="hint">手動指令は source="sim_ui" として vision_pal/move に流れます（Vision Pro / DualSense と同じ経路）。自律層が動いている間は、その指令と競合します。</div>
+    </section>
+    <section class="card">
+      <h2>各層の状態</h2>
+      <div class="layers" id="layers"></div>
+    </section>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const post = (cmd) => fetch("/api/cmd", {method: "POST", headers: {"Content-Type": "application/json"},
+  body: JSON.stringify(cmd)});
+let state = null;
+
+// ── controls ──
+$("btn-pause").onclick = () => post({action: "pause"});
+$("btn-reset").onclick = () => post({action: "reset"});
+$("btn-random").onclick = () => post({action: "randomize"});
+$("btn-recharge").onclick = () => post({action: "recharge"});
+$("speed").oninput = () => $("speed-v").textContent = (+$("speed").value).toFixed(2);
+const drive = (direction) => post({action: "drive", direction, speed: +$("speed").value});
+document.querySelectorAll("[data-dir]").forEach((b) => {
+  let pressed = false;
+  b.onmousedown = () => { pressed = true; drive(b.dataset.dir); };
+  b.onmouseup = b.onmouseleave = () => { if (pressed && b.dataset.dir !== "stop") drive("stop"); pressed = false; };
+  b.ontouchstart = (e) => { e.preventDefault(); drive(b.dataset.dir); };
+  b.ontouchend = () => { if (b.dataset.dir !== "stop") drive("stop"); };
+});
+const keys = {w: "forward", arrowup: "forward", s: "backward", arrowdown: "backward",
+  a: "left", arrowleft: "left", d: "right", arrowright: "right", " ": "stop"};
+let heldKey = null;
+addEventListener("keydown", (e) => {
+  if (e.target.tagName === "INPUT") return;
+  const dir = keys[e.key.toLowerCase()];
+  if (!dir || e.repeat) return;
+  e.preventDefault();
+  heldKey = e.key.toLowerCase();
+  drive(dir);
+});
+addEventListener("keyup", (e) => {
+  if (e.key.toLowerCase() === heldKey && keys[heldKey] !== "stop") { heldKey = null; drive("stop"); }
+});
+
+// ── map ──
+const canvas = $("map"), ctx = canvas.getContext("2d");
+function mapTransform(world) {
+  const pad = 20, w = canvas.width - pad * 2, h = canvas.height - pad * 2;
+  const s = Math.min(w / world.width, h / world.height);
+  const ox = pad + (w - world.width * s) / 2, oy = pad + (h - world.height * s) / 2;
+  return {s, toPx: (x, y) => [ox + x * s, oy + (world.height - y) * s],
+          toWorld: (px, py) => [(px - ox) / s, world.height - (py - oy) / s]};
+}
+canvas.addEventListener("click", (e) => {
+  if (!state) return;
+  const r = canvas.getBoundingClientRect();
+  const [x, y] = mapTransform(state.world).toWorld((e.clientX - r.left) * canvas.width / r.width,
+                                                   (e.clientY - r.top) * canvas.height / r.height);
+  if (e.altKey) post({action: "place_robot", x, y});
+  else if (e.shiftKey) post({action: "remove_box", x, y});
+  else post({action: "add_box", x, y});
+});
+const rgb = (c, a = 1) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+
+function drawMap() {
+  const W = state.world, T = mapTransform(W), s = T.s;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  // floor grid
+  const [x0, y0] = T.toPx(0, W.height), [x1, y1] = T.toPx(W.width, 0);
+  ctx.fillStyle = "#1a1f26"; ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+  ctx.strokeStyle = "#232a33"; ctx.lineWidth = 1;
+  for (let gx = 0; gx <= W.width; gx += 0.5) { const [px] = T.toPx(gx, 0); ctx.beginPath(); ctx.moveTo(px, y0); ctx.lineTo(px, y1); ctx.stroke(); }
+  for (let gy = 0; gy <= W.height; gy += 0.5) { const [, py] = T.toPx(0, gy); ctx.beginPath(); ctx.moveTo(x0, py); ctx.lineTo(x1, py); ctx.stroke(); }
+  ctx.strokeStyle = "#c8beaa"; ctx.lineWidth = 4; ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
+  // boxes
+  for (const b of W.boxes) {
+    const [bx, by] = T.toPx(b.x - b.w / 2, b.y + b.d / 2);
+    ctx.fillStyle = rgb(b.color, .9); ctx.fillRect(bx, by, b.w * s, b.d * s);
+  }
+  // trail
+  ctx.strokeStyle = "rgba(79,163,255,.45)"; ctx.lineWidth = 2; ctx.beginPath();
+  W.trail.forEach(([tx, ty], i) => { const [px, py] = T.toPx(tx, ty); i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); });
+  ctx.stroke();
+  // people
+  for (const p of W.people) {
+    const [px, py] = T.toPx(p.x, p.y);
+    ctx.fillStyle = rgb(p.color); ctx.beginPath(); ctx.arc(px, py, p.r * s, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#e1b996"; ctx.beginPath(); ctx.arc(px, py, p.r * s * .45, 0, Math.PI * 2); ctx.fill();
+  }
+  // robot + camera cone coloured by blocked probability
+  const R = W.robot, [rx, ry] = T.toPx(R.x, R.y);
+  const edge = state.layers["vision_pal/edge/state"];
+  const blocked = edge ? edge.payload.blocked_prob || 0 : 0;
+  const coneLen = Math.max(0.15, state.sim.front_distance || 0.6) * s;
+  const half = 50 * Math.PI / 180;
+  ctx.fillStyle = blocked > 0.5 ? "rgba(239,91,91,.22)" : "rgba(62,207,142,.16)";
+  ctx.beginPath(); ctx.moveTo(rx, ry);
+  ctx.arc(rx, ry, coneLen, -R.theta - half, -R.theta + half); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = R.bumped ? "#ef5b5b" : "#e6e9ee";
+  ctx.beginPath(); ctx.arc(rx, ry, R.radius * s, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "#0f1216"; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(rx, ry);
+  ctx.lineTo(rx + Math.cos(R.theta) * R.radius * s, ry - Math.sin(R.theta) * R.radius * s); ctx.stroke();
+}
+
+// ── layers ──
+const age = (entry) => entry ? ((state.now - entry.t).toFixed(1) + "s") : "—";
+const fmt = (v, d = 2) => (typeof v === "number" ? v.toFixed(d) : (v ?? "—"));
+const bar = (v, color) => `<div class="bar"><i style="width:${Math.round(Math.max(0, Math.min(1, v || 0)) * 100)}%;background:${color || "var(--accent)"}"></i></div>`;
+const kv = (pairs) => `<div class="kv">${pairs.map(([k, v]) => `<span class="k">${k}</span><span class="v">${v}</span>`).join("")}</div>`;
+
+function layerCard(title, entry, body, staleAfter = 5) {
+  const stale = !entry || state.now - entry.t > staleAfter;
+  return `<div class="layer ${stale ? "stale" : ""}"><div class="title">${title}<span class="age">${age(entry)}</span></div>${entry ? body(entry.payload) : '<div class="hint">未受信（この層は起動していません）</div>'}</div>`;
+}
+
+function drawLayers() {
+  const L = state.layers, R = state.world.robot;
+  const cards = [
+    layerCard("Motor", L["vision_pal/move"], (p) =>
+      `<div class="big">${R.direction} ${fmt(R.speed)}</div>` + kv([["source", `<span class="src-${p.source}">${p.source || "—"}</span>`], ["reason", p.reason || "—"]]), 1e9),
+    layerCard("Edge (blocked)", L["vision_pal/edge/state"], (p) =>
+      `<div class="big">${fmt(p.blocked_prob)}</div>` + bar(p.blocked_prob, p.blocked_prob > .5 ? "var(--bad)" : "var(--ok)") +
+      kv([["前方距離", fmt(state.sim.front_distance) + " m"], ["moving", p.motor_running]])),
+    layerCard("Neural sensory", L["vision_pal/neural/sensory"], (p) =>
+      kv([["motion L", fmt(p.motion_left)], ["motion R", fmt(p.motion_right)], ["looming", fmt(p.looming)]]) + bar(p.looming, "var(--warn)")),
+    layerCard("Neural reflex", L["vision_pal/neural/action"], (p) =>
+      `<div class="big">${p.direction}</div>` + kv([["confidence", fmt(p.confidence)], ["reason", p.reason || "—"]]), 3),
+    layerCard("Jev", L["vision_pal/jev/decision"], (p) =>
+      `<div class="big">${p.behavior}</div>` + bar(p.confidence, "#c89bff") +
+      kv([["confidence", fmt(p.confidence)], ["hazard", fmt(p.hazard)], ["interest", fmt(p.interest)], ["latency", (p.latency_ms ?? "—") + " ms"]])),
+    layerCard("AsyncVLA", L["vision_pal/vla/state"], (p) =>
+      `<div class="big">${p.current_action}</div>` + kv([["source", p.action_source], ["priority", p.action_priority],
+        ["drive", p.cloud ? p.cloud.dominant_drive : "—"]])),
+    layerCard("Survival", L["vision_pal/survival/state"], (p) =>
+      Object.entries(p.drives || {}).map(([k, d]) => `<div class="kv"><span class="k">${k}${d.urgent ? " ⚠" : ""}</span><span class="v">${fmt(d.level)}</span></div>${bar(d.level, d.urgent ? "var(--warn)" : "")}`).join("") ||
+      kv([["dominant", p.dominant_drive]])),
+    layerCard("Body", L["vision_pal/body/state"], (p) =>
+      kv([["battery", Math.round((p.battery ?? 0) * 100) + "%"], ["voltage", fmt(p.voltage) + " V"], ["cpu", fmt(p.cpu_temp, 1) + " °C"], ["idle", fmt(p.idle_sec, 0) + " s"]]) +
+      bar(p.battery, (p.battery ?? 1) < .25 ? "var(--bad)" : "var(--ok)")),
+    layerCard("Collision", L["vision_pal/perception/collision"], (p) =>
+      kv([["severity", p.severity], ["method", p.method || "—"], ["blocked", fmt(p.blocked_prob)]]), 3),
+    layerCard("Scene (VLM)", L["vision_pal/perception/scene"], (p) => `<div class="hint">${p.summary || "—"}</div>`, 30),
+  ];
+  $("layers").innerHTML = cards.join("");
+}
+
+function drawLog() {
+  $("log").innerHTML = state.move_log.slice().reverse().map((m) =>
+    `<tr><td>${new Date(m.t * 1000).toLocaleTimeString()}</td><td>${m.direction}</td><td>${fmt(m.speed)}</td>` +
+    `<td class="src-${m.source}">${m.source || "—"}</td><td>${m.reason || ""}</td></tr>`).join("");
+}
+
+function drawHeader() {
+  const sim = state.sim;
+  const m = $("b-mqtt");
+  m.textContent = !sim.mqtt ? "MQTT off (UI only)" : sim.mqtt_connected ? "MQTT connected" : "MQTT connecting…";
+  m.className = "badge " + (!sim.mqtt ? "" : sim.mqtt_connected ? "ok" : "bad");
+  $("b-time").textContent = `t=${state.world.time.toFixed(0)}s`;
+  $("b-render").textContent = `render ${sim.render_ms} ms`;
+  $("b-stats").textContent = `dist ${state.world.distance} m · bumps ${state.world.collisions}`;
+  $("btn-pause").classList.toggle("active", sim.paused);
+  $("btn-pause").textContent = sim.paused ? "再開" : "一時停止";
+  $("seed").textContent = `seed ${state.world.seed}`;
+}
+
+const es = new EventSource("/events");
+es.onmessage = (e) => {
+  state = JSON.parse(e.data);
+  drawHeader(); drawMap(); drawLayers(); drawLog();
+};
+es.onerror = () => { $("b-mqtt").textContent = "sim server offline"; $("b-mqtt").className = "badge bad"; };
+</script>
+</body>
+</html>

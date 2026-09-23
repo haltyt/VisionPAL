@@ -115,6 +115,14 @@ VisionPAL/
 │       ├── SplatDemoView.swift        3DGS表示
 │       └── ...
 │
+├── Simulator/          🧪 ブラウザ仮想ロボット（実機なしで全層を動かす）
+│   ├── launch.py              ブローカー + シミュレータ + 各層を一括起動
+│   ├── sim_server.py          仮想JetBot（MQTT / MJPEG / Web UI）
+│   ├── world.py               部屋・箱・歩く人・差動二輪の物理
+│   ├── camera.py              一人称カメラ（numpy レイキャスト）
+│   ├── sensors.py             Edge/衝突/Body の仮想センサ
+│   └── static/index.html      俯瞰マップ・FPV・操縦・各層の状態
+│
 ├── StreamDiffusion/    🎨 リアルタイム画風変換（PC側）
 │   ├── server.py              StreamDiffusionサーバー
 │   └── sharp_server.py        SHARP 3DGS生成サーバー
@@ -296,6 +304,32 @@ python3 ~/dualsense_drive.py
 # Xcode で VisionPro/VisionPAL.xcodeproj を開いてビルド
 # DualSense Bluetooth ペアリング後、メインウィンドウをピンチでフォーカス → 左スティックで操縦
 ```
+
+## ブラウザシミュレータ（実機なし）
+
+JetBot の代わりに仮想ロボットを動かし、Cognition の各層を**コードを変えずに**そのまま試せます。シミュレータは実機と同じ MQTT トピックと MJPEG エンドポイントを出します。
+
+| 実機 | シミュレータでの代わり |
+|---|---|
+| `mqtt_robot.py`（`vision_pal/move` でモーター駆動） | 差動二輪の物理（最後の指令が次の指令まで続く） |
+| `mjpeg_server.py`（`:8554/stream`, `/snap`） | 一人称レイキャスト映像（同じ URL 形式） |
+| `collision_detect_v2.py`（`edge/state`、衝突予測） | 前方レイの距離から blocked 確率を算出 |
+| `imu_collision.py`（ぶつかった衝撃） | 物理的な接触で `perception/collision` を出し、モーターを止める |
+| `body_sensor.py`（`body/state`） | 走行負荷で温度が上がり、バッテリーが減る |
+
+```bash
+pip install numpy opencv-python paho-mqtt requests
+# mosquitto（brew / apt）か Docker が必要。すでに :1883 で動いていればそれを使う
+python3 -m Simulator.launch                      # sim + connectome + async_vla
+python3 -m Simulator.launch --layers all         # + survival, explore, jev（TYPESAFE_API_KEY があれば）
+python3 -m Simulator.launch --no-mqtt            # ブラウザ操縦だけ（ブローカー不要）
+# → http://localhost:8554/ を開く
+```
+
+- 各プロセスには `MQTT_HOST=127.0.0.1` と `CAMERA_URL=http://127.0.0.1:8554/stream` が環境変数で渡されます。環境変数は `.env` より優先されるので、実機用の `.env` を書き換える必要はありません
+- 画面では、俯瞰マップ（クリックで箱を置く、Shift+クリックで消す、Alt+クリックでロボットを移動）、カメラ映像、WASD による手動操縦、各層の最新状態、`vision_pal/move` の指令ログ（どの層が動かしたか）を確認できます
+- 手動操縦は `source="sim_ui"` として `vision_pal/move` に流れます。Vision Pro や DualSense と同じ経路です
+- `--seed N` で同じ部屋を再現できます。`--people N` で歩く人の数を変えられます
 
 ## 操縦方法
 
