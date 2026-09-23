@@ -65,6 +65,54 @@ UI_TOPICS = [
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
+TOPIC_NEURAL_ACTION = "vision_pal/neural/action"
+TOPIC_NEURAL_SENSORY = "vision_pal/neural/sensory"
+TOPIC_JEV = "vision_pal/jev/decision"
+TOPIC_EXPLORE = "vision_pal/explore/state"
+TOPIC_SCENE = "vision_pal/perception/scene"
+
+# Freshness windows for "proposing" (match async_vla's arbiter ttls).
+REFLEX_TTL = 0.75     # async_vla: neural_reflex proposal ttl
+BEHAVIOR_TTL = 1.5    # async_vla: jev_behavior proposal ttl
+THOUGHT_TTL = 5.0
+TIMELINE_SEC = 60.0
+
+SAFETY_REASONS = {"emergency_stop", "avoid"}
+SURVIVAL_REASONS = {"retreat", "cool_down", "seek_energy", "explore", "seek_social", "clean_space"}
+
+
+def classify_move(payload: Dict[str, Any], explore_planner: Optional[str] = None) -> Dict[str, str]:
+    """Map a vision_pal/move command to the decision tier that issued it.
+
+    explore_planner: planner of the last explore_vla step, so its intermediate
+    stop commands (sent without a planner) stay attributed to the same tier.
+    """
+    source = str(payload.get("source", ""))
+    reason = str(payload.get("reason", ""))
+    if source == "connectome":
+        return {"tier": "reflex", "label": "Connectome: {}".format(reason or payload.get("direction", ""))}
+    if source == "jev":
+        return {"tier": "behavior", "label": "Jev: {}".format(reason or payload.get("direction", ""))}
+    if source == "async_vla_cloud":
+        return {"tier": "thought", "label": "VLM の提案"}
+    if source == "explore_vla":
+        planner = payload.get("planner") or explore_planner
+        if planner == "llm":
+            return {"tier": "thought", "label": "LLM: {}".format(reason or payload.get("direction", ""))}
+        return {"tier": "survival", "label": "ランダム探索"}
+    if source in ("edge_layer", "imu_auto_stop"):
+        return {"tier": "safety", "label": "安全停止 ({})".format(source)}
+    if source == "async_vla_ttl":
+        return {"tier": "idle", "label": "提案の期限切れ → 停止"}
+    if source == "async_vla":
+        if reason in SAFETY_REASONS:
+            return {"tier": "safety", "label": "安全 ({})".format(reason)}
+        if reason in SURVIVAL_REASONS:
+            return {"tier": "survival", "label": "Survival ({})".format(reason)}
+    if source == "sim_ui":
+        return {"tier": "manual", "label": "手動操縦"}
+    return {"tier": "other", "label": source or "不明"}
+
 
 class Simulation:
     def __init__(self, seed: Optional[int] = None, people: int = 1, boxes: int = 5,
@@ -85,7 +133,8 @@ class Simulation:
         self.frame_id = 0
         self.render_ms = 0.0
         self.layers: Dict[str, Dict[str, Any]] = {}
-        self.move_log: deque = deque(maxlen=40)
+        self.move_log: deque = deque(maxlen=300)
+        self.explore_planner: Optional[str] = None
         self.client = None
         self.mqtt_connected = False
         if mqtt_host:
@@ -155,10 +204,14 @@ class Simulation:
         with self.lock:
             self.world.set_command(direction, speed, source)
             self.layers[TOPIC_MOVE] = {"payload": payload, "t": time.time()}
+            if source == "explore_vla" and payload.get("planner"):
+                self.explore_planner = payload.get("planner")
+            tier = classify_move(payload, self.explore_planner if source == "explore_vla" else None)
             self.move_log.append({
                 "t": round(time.time(), 2), "direction": self.world.robot.direction,
                 "speed": round(self.world.robot.speed, 2), "source": source,
                 "reason": str(payload.get("reason", "")),
+                "tier": tier["tier"], "label": tier["label"],
             })
 
     # ── loops ──
@@ -238,6 +291,7 @@ class Simulation:
                                             n_people=int(cmd.get("people", self.people)))
                 self.body = BodyModel()
                 self.move_log.clear()
+                self.explore_planner = None
         elif action == "pause":
             self.paused = bool(cmd.get("paused", not self.paused))
         elif action == "add_box":
@@ -261,7 +315,82 @@ class Simulation:
             return {"ok": False, "error": "unknown action"}
         return {"ok": True}
 
+    def _active(self) -> Dict[str, Any]:
+        if not self.move_log:
+            return {"tier": "idle", "label": "指令なし", "since": None}
+        last = self.move_log[-1]
+        return {"tier": last["tier"], "label": last["label"], "since": last["t"]}
+
+    def _fresh(self, topic: str, ttl: float, now: float) -> Optional[Dict[str, Any]]:
+        entry = self.layers.get(topic)
+        if entry and now - entry["t"] <= ttl:
+            return entry["payload"]
+        return None
+
+    def _tier_states(self, now: float) -> Dict[str, Dict[str, Any]]:
+        """Per tier: driving / proposing / standby / offline, plus a one-line detail."""
+        active = self._active()
+        L = self.layers
+
+        def age(*topics: str) -> Optional[float]:
+            ts = [L[t]["t"] for t in topics if t in L]
+            return round(now - max(ts), 1) if ts else None
+
+        # 反射 (Connectome)
+        reflex = self._fresh(TOPIC_NEURAL_ACTION, REFLEX_TTL, now)
+        if reflex is not None and not reflex.get("reflex", False):
+            reflex = None
+        neural_seen = TOPIC_NEURAL_ACTION in L or TOPIC_NEURAL_SENSORY in L
+        last_reflex = (L.get(TOPIC_NEURAL_ACTION) or {}).get("payload", {})
+        reflex_state = {
+            "status": "proposing" if reflex else ("standby" if neural_seen else "offline"),
+            "detail": "{} ({}, conf {:.2f})".format(reflex.get("direction"), reflex.get("reason", ""),
+                                                   float(reflex.get("confidence", 0)))
+                      if reflex else ("最後の反射: {}".format(last_reflex.get("reason", "—")) if last_reflex
+                                      else ("入力を監視中" if neural_seen else "connectome 未起動")),
+            "age": age(TOPIC_NEURAL_ACTION, TOPIC_NEURAL_SENSORY),
+        }
+
+        # 行動 (Jev)
+        jev = self._fresh(TOPIC_JEV, BEHAVIOR_TTL, now)
+        last_jev = (L.get(TOPIC_JEV) or {}).get("payload", {})
+        behavior_state = {
+            "status": "proposing" if jev else ("standby" if last_jev else "offline"),
+            "detail": "{} (conf {:.2f}, {} ms)".format(jev.get("behavior"), float(jev.get("confidence", 0)),
+                                                     jev.get("latency_ms", "—"))
+                      if jev else ("最後の判断: {}".format(last_jev.get("behavior")) if last_jev
+                                   else "Jev 未起動 (TYPESAFE_API_KEY)"),
+            "age": age(TOPIC_JEV),
+        }
+
+        # 思考 (LLM)
+        explore = (L.get(TOPIC_EXPLORE) or {}).get("payload", {})
+        explore_fresh = self._fresh(TOPIC_EXPLORE, THOUGHT_TTL, now)
+        scene = self._fresh(TOPIC_SCENE, 10.0, now) or {}
+        suggestion = scene.get("suggested_action", "")
+        llm_enabled = bool(explore.get("vla_enabled")) or TOPIC_SCENE in L
+        if explore_fresh and explore_fresh.get("status") == "vla_action":
+            thought = {"status": "proposing", "detail": str(explore_fresh.get("description", ""))[:80]}
+        elif suggestion and suggestion != "forward":
+            thought = {"status": "proposing", "detail": "VLM: {}".format(suggestion)}
+        elif llm_enabled:
+            thought = {"status": "standby",
+                       "detail": str(explore.get("description") or scene.get("summary") or "待機中")[:80]}
+        else:
+            thought = {"status": "offline",
+                       "detail": "LLM 未設定 (explore はランダム探索)" if explore else "LLM 層 未起動"}
+        thought["age"] = age(TOPIC_EXPLORE, TOPIC_SCENE)
+
+        states = {"reflex": reflex_state, "behavior": behavior_state, "thought": thought}
+        driving = states.get(active["tier"])
+        if driving is not None:
+            if driving["status"] != "proposing":
+                driving["detail"] = active["label"]  # proposal already expired; show the command itself
+            driving["status"] = "driving"
+        return states
+
     def snapshot(self) -> Dict[str, Any]:
+        now = time.time()
         with self.lock:
             world = self.world.to_dict()
             edge_dist = self.edge.last_min_distance if self.edge else None
@@ -269,6 +398,9 @@ class Simulation:
                 "world": world,
                 "layers": {k: v for k, v in self.layers.items()},
                 "move_log": list(self.move_log)[-15:],
+                "active": self._active(),
+                "tiers": self._tier_states(now),
+                "timeline": [[m["t"], m["tier"]] for m in self.move_log if now - m["t"] <= TIMELINE_SEC],
                 "sim": {
                     "paused": self.paused,
                     "mqtt": self.client is not None,
@@ -278,7 +410,7 @@ class Simulation:
                     "front_distance": None if edge_dist is None else round(edge_dist, 3),
                     "battery": round(self.body.battery, 3),
                 },
-                "now": time.time(),
+                "now": now,
             }
 
 

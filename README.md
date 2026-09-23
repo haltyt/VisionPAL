@@ -328,6 +328,7 @@ python3 -m Simulator.launch --no-mqtt            # ブラウザ操縦だけ（�
 
 - 各プロセスには `MQTT_HOST=127.0.0.1` と `CAMERA_URL=http://127.0.0.1:8554/stream` が環境変数で渡されます。環境変数は `.env` より優先されるので、実機用の `.env` を書き換える必要はありません
 - 画面では、俯瞰マップ（クリックで箱を置く、Shift+クリックで消す、Alt+クリックでロボットを移動）、カメラ映像、WASD による手動操縦、各層の最新状態、`vision_pal/move` の指令ログ（どの層が動かしたか）を確認できます
+- 「判断している層」カードは 思考（LLM）/ 行動（Jev）/ 反射（Connectome）を縦に並べ、いまモーターを動かしている層を強調します。各層が「実行中 / 提案中（別の層に負けている）/ 待機 / 未起動」のどれかを表示し、直近 60 秒のタイムラインで層の切り替わりを追えます。どの層の指令かは `vision_pal/move` の `source`（explore は `planner: llm|random`）から判定します
 - 手動操縦は `source="sim_ui"` として `vision_pal/move` に流れます。Vision Pro や DualSense と同じ経路です
 - `--seed N` で同じ部屋を再現できます。`--people N` で歩く人の数を変えられます
 

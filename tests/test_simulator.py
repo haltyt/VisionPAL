@@ -16,7 +16,8 @@ if ROOT not in sys.path:
 
 from Simulator.camera import Camera
 from Simulator.sensors import BodyModel, EdgeSensor
-from Simulator.sim_server import TOPIC_COLLISION, TOPIC_MOVE, Simulation, make_handler
+from Simulator.sim_server import (TOPIC_COLLISION, TOPIC_EXPLORE, TOPIC_JEV, TOPIC_MOVE, TOPIC_NEURAL_ACTION,
+                                  Simulation, classify_move, make_handler)
 from Simulator.world import MAX_LINEAR, Box, Person, World
 
 
@@ -158,6 +159,68 @@ class SimulationTests(unittest.TestCase):
 
     def test_unknown_command_rejected(self):
         self.assertFalse(self.sim.command({"action": "fly"})["ok"])
+
+
+class TierTests(unittest.TestCase):
+    def test_classify_sources(self):
+        cases = [
+            ({"source": "connectome", "reason": "looming_escape"}, "reflex"),
+            ({"source": "jev", "reason": "scan_left"}, "behavior"),
+            ({"source": "explore_vla", "planner": "llm", "reason": "人が見える"}, "thought"),
+            ({"source": "async_vla_cloud"}, "thought"),
+            ({"source": "explore_vla", "planner": "random"}, "survival"),
+            ({"source": "async_vla", "reason": "retreat"}, "survival"),
+            ({"source": "async_vla", "reason": "emergency_stop"}, "safety"),
+            ({"source": "edge_layer"}, "safety"),
+            ({"source": "imu_auto_stop"}, "safety"),
+            ({"source": "async_vla_ttl"}, "idle"),
+            ({"source": "sim_ui"}, "manual"),
+            ({"source": "dualsense"}, "other"),
+        ]
+        for payload, tier in cases:
+            self.assertEqual(classify_move(payload)["tier"], tier, payload)
+
+    def test_explore_stop_inherits_last_planner(self):
+        sim = Simulation(seed=1, mqtt_host=None)
+        sim.apply_move({"direction": "forward", "source": "explore_vla", "planner": "llm", "reason": "go"})
+        sim.apply_move({"direction": "stop", "source": "explore_vla"})
+        self.assertEqual(sim.move_log[-1]["tier"], "thought")
+
+    def test_tier_status_transitions(self):
+        sim = Simulation(seed=1, mqtt_host=None)
+        tiers = sim.snapshot()["tiers"]
+        self.assertEqual({t["status"] for t in tiers.values()}, {"offline"})
+
+        sim._record(TOPIC_NEURAL_ACTION, {"direction": "forward", "reflex": False, "reason": "baseline"})
+        self.assertEqual(sim.snapshot()["tiers"]["reflex"]["status"], "standby")
+
+        sim._record(TOPIC_NEURAL_ACTION, {"direction": "left", "reflex": True, "confidence": 0.6,
+                                          "reason": "lateral_avoidance"})
+        sim._record(TOPIC_JEV, {"behavior": "explore_forward", "confidence": 0.8, "latency_ms": 120})
+        sim.apply_move({"direction": "forward", "source": "jev", "reason": "explore_forward"})
+        snap = sim.snapshot()
+        self.assertEqual(snap["active"]["tier"], "behavior")
+        self.assertEqual(snap["tiers"]["behavior"]["status"], "driving")
+        self.assertEqual(snap["tiers"]["reflex"]["status"], "proposing")
+
+        sim.layers[TOPIC_NEURAL_ACTION]["t"] -= 5.0
+        self.assertEqual(sim.snapshot()["tiers"]["reflex"]["status"], "standby")
+
+    def test_thought_offline_when_explore_has_no_llm(self):
+        sim = Simulation(seed=1, mqtt_host=None)
+        sim._record(TOPIC_EXPLORE, {"status": "moving", "vla_enabled": False})
+        self.assertEqual(sim.snapshot()["tiers"]["thought"]["status"], "offline")
+        sim._record(TOPIC_EXPLORE, {"status": "vla_action", "vla_enabled": True, "description": "VLA: left"})
+        self.assertEqual(sim.snapshot()["tiers"]["thought"]["status"], "proposing")
+
+    def test_ttl_stop_makes_active_idle_and_timeline_tracks_tiers(self):
+        sim = Simulation(seed=1, mqtt_host=None)
+        sim.apply_move({"direction": "left", "source": "connectome", "reason": "lateral_avoidance"})
+        sim.apply_move({"direction": "stop", "source": "async_vla_ttl", "reason": "action_expired"})
+        snap = sim.snapshot()
+        self.assertEqual(snap["active"]["tier"], "idle")
+        self.assertEqual([tier for _t, tier in snap["timeline"]], ["reflex", "idle"])
+        self.assertEqual(snap["tiers"]["reflex"]["status"], "offline")
 
 
 class HTTPTests(unittest.TestCase):

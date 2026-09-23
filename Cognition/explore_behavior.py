@@ -444,7 +444,7 @@ class ExploreBehavior:
                     else:
                         speed = EXPLORE_SPEED
 
-                    self._send_move(action, speed)
+                    self._send_move(action, speed, planner="llm", reason=reason)
                     self.steps_taken += 1
                     self.explore_history.append({
                         "action": action, "duration": duration,
@@ -463,7 +463,7 @@ class ExploreBehavior:
                 else:
                     # フォールバック: ランダムウォーク
                     forward_time = random.uniform(*FALLBACK_FORWARD)
-                    self._send_move("forward", EXPLORE_SPEED)
+                    self._send_move("forward", EXPLORE_SPEED, planner="random")
                     self.steps_taken += 1
                     self.explore_history.append({
                         "action": "forward", "duration": forward_time,
@@ -486,7 +486,7 @@ class ExploreBehavior:
                         direction = random.choice(["left", "right"])
 
                     turn_time = random.uniform(*FALLBACK_TURN)
-                    self._send_move(direction, TURN_SPEED)
+                    self._send_move(direction, TURN_SPEED, planner="random")
                     self.last_direction = direction
 
                     if not self._execute_with_collision_check(turn_time):
@@ -591,14 +591,21 @@ class ExploreBehavior:
                     "timestamp": time.time(),
                 }, ensure_ascii=False))
 
-    def _send_move(self, direction, speed):
-        """モーター制御をMQTTで送信"""
+    def _send_move(self, direction, speed, planner=None, reason=""):
+        """モーター制御をMQTTで送信
+
+        planner: "llm" (LLMプランナーの判断) / "random" (フォールバック) / None (停止・回避)
+        """
         if self.client:
-            self.client.publish(TOPIC_MOVE, json.dumps({
+            payload = {
                 "direction": direction,
                 "speed": speed,
                 "source": "explore_vla",
-            }))
+            }
+            if planner:
+                payload["planner"] = planner
+                payload["reason"] = reason[:60] if reason else planner
+            self.client.publish(TOPIC_MOVE, json.dumps(payload, ensure_ascii=False))
 
     def _publish_state(self, status, description=""):
         """探索状態をMQTTでpublish"""

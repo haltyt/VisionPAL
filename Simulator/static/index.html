@@ -54,6 +54,34 @@ main { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); g
 table { width: 100%; border-collapse: collapse; font: 12px var(--mono); }
 td, th { text-align: left; padding: 3px 6px; border-bottom: 1px solid var(--line); white-space: nowrap; }
 th { color: var(--muted); font-weight: 500; }
+/* decision tiers */
+:root { --t-thought: #f5b041; --t-behavior: #c89bff; --t-reflex: #5fd3c7;
+  --t-safety: #ef5b5b; --t-survival: #7fa7d9; --t-manual: #e6e9ee; --t-idle: #4a525e; --t-other: #8a94a3; }
+.tiers { display: flex; flex-direction: column; gap: 6px; }
+.tier { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; align-items: center; gap: 10px;
+  padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel2);
+  transition: background .15s, border-color .15s; }
+.tier .name { font-weight: 700; font-size: 15px; line-height: 1.1; }
+.tier .name small { display: block; font: 11px var(--mono); color: var(--muted); font-weight: 400; margin-top: 2px; }
+.tier .detail { font: 12px var(--mono); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tier .status { font: 11px var(--mono); padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line);
+  color: var(--muted); white-space: nowrap; }
+.tier.offline { opacity: .45; }
+.tier.proposing .status { border-style: dashed; }
+.tier.driving { border-color: var(--tc); background: color-mix(in srgb, var(--tc) 18%, var(--panel2)); }
+.tier.driving .detail { color: var(--text); }
+.tier.driving .status { background: var(--tc); border-color: var(--tc); color: #0f1216; font-weight: 700; }
+.tier .name { color: var(--tc); }
+.tier[data-tier=thought] { --tc: var(--t-thought); }
+.tier[data-tier=behavior] { --tc: var(--t-behavior); }
+.tier[data-tier=reflex] { --tc: var(--t-reflex); }
+.override { margin-top: 8px; font: 12px var(--mono); color: var(--muted); min-height: 18px; }
+.override b { color: var(--text); }
+#timeline { width: 100%; height: 26px; display: block; margin-top: 10px; border-radius: 6px; background: #0b0d10; }
+.axis { display: flex; justify-content: space-between; font: 10px var(--mono); color: var(--muted); margin-top: 2px; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 6px; font: 11px var(--mono); color: var(--muted); }
+.legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+.tier-tag { font: 11px var(--mono); }
 .src-jev { color: #c89bff; } .src-connectome { color: #5fd3c7; } .src-edge_layer, .src-imu_auto_stop { color: var(--bad); }
 .src-sim_ui { color: var(--warn); } .src-async_vla, .src-async_vla_ttl { color: var(--accent); }
 </style>
@@ -81,12 +109,24 @@ th { color: var(--muted); font-weight: 500; }
     </section>
     <section class="card">
       <h2>モーター指令ログ <span class="age">vision_pal/move</span></h2>
-      <div class="scroll"><table><thead><tr><th>time</th><th>dir</th><th>speed</th><th>source</th><th>reason</th></tr></thead>
+      <div class="scroll"><table><thead><tr><th>time</th><th>層</th><th>dir</th><th>speed</th><th>source</th><th>reason</th></tr></thead>
         <tbody id="log"></tbody></table></div>
     </section>
   </div>
 
   <div class="col">
+    <section class="card">
+      <h2>判断している層 <span class="age" id="active-since"></span></h2>
+      <div class="tiers" id="tiers">
+        <div class="tier offline" data-tier="thought"><div class="name">思考<small>LLM</small></div><div class="detail">—</div><span class="status">未起動</span></div>
+        <div class="tier offline" data-tier="behavior"><div class="name">行動<small>Jev</small></div><div class="detail">—</div><span class="status">未起動</span></div>
+        <div class="tier offline" data-tier="reflex"><div class="name">反射<small>Connectome</small></div><div class="detail">—</div><span class="status">未起動</span></div>
+      </div>
+      <div class="override" id="override"></div>
+      <canvas id="timeline" width="600" height="26"></canvas>
+      <div class="axis"><span>−60s</span><span>now</span></div>
+      <div class="legend" id="legend"></div>
+    </section>
     <section class="card">
       <h2>カメラ (FPV) <span class="age">/stream</span></h2>
       <img id="fpv" src="/stream" alt="simulated JetBot camera">
@@ -202,6 +242,11 @@ function drawMap() {
   ctx.arc(rx, ry, coneLen, -R.theta - half, -R.theta + half); ctx.closePath(); ctx.fill();
   ctx.fillStyle = R.bumped ? "#ef5b5b" : "#e6e9ee";
   ctx.beginPath(); ctx.arc(rx, ry, R.radius * s, 0, Math.PI * 2); ctx.fill();
+  const activeTier = TIER[state.active.tier];
+  if (activeTier && state.active.tier !== "idle") {
+    ctx.strokeStyle = activeTier.color; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.arc(rx, ry, R.radius * s + 4, 0, Math.PI * 2); ctx.stroke();
+  }
   ctx.strokeStyle = "#0f1216"; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(rx, ry);
   ctx.lineTo(rx + Math.cos(R.theta) * R.radius * s, ry - Math.sin(R.theta) * R.radius * s); ctx.stroke();
 }
@@ -250,8 +295,55 @@ function drawLayers() {
 
 function drawLog() {
   $("log").innerHTML = state.move_log.slice().reverse().map((m) =>
-    `<tr><td>${new Date(m.t * 1000).toLocaleTimeString()}</td><td>${m.direction}</td><td>${fmt(m.speed)}</td>` +
+    `<tr><td>${new Date(m.t * 1000).toLocaleTimeString()}</td>` +
+    `<td class="tier-tag" style="color:${TIER[m.tier]?.color || "var(--muted)"}">${TIER[m.tier]?.name || m.tier || "—"}</td><td>${m.direction}</td><td>${fmt(m.speed)}</td>` +
     `<td class="src-${m.source}">${m.source || "—"}</td><td>${m.reason || ""}</td></tr>`).join("");
+}
+
+const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const TIER = {
+  thought: {name: "思考", color: cssVar("--t-thought")},
+  behavior: {name: "行動", color: cssVar("--t-behavior")},
+  reflex: {name: "反射", color: cssVar("--t-reflex")},
+  safety: {name: "安全", color: cssVar("--t-safety")},
+  survival: {name: "欲求", color: cssVar("--t-survival")},
+  manual: {name: "手動", color: cssVar("--t-manual")},
+  idle: {name: "待機", color: cssVar("--t-idle")},
+  other: {name: "他", color: cssVar("--t-other")},
+};
+const STATUS = {driving: "実行中", proposing: "提案中", standby: "待機", offline: "未起動"};
+$("legend").innerHTML = Object.values(TIER).map((t) => `<span><i style="background:${t.color}"></i>${t.name}</span>`).join("");
+
+function drawTiers() {
+  for (const row of document.querySelectorAll(".tier")) {
+    const t = state.tiers[row.dataset.tier];
+    row.className = "tier " + t.status;
+    row.querySelector(".detail").textContent = t.detail;
+    row.querySelector(".detail").title = t.detail;
+    row.querySelector(".status").textContent = STATUS[t.status] + (t.age != null && t.status !== "driving" ? ` ${t.age}s` : "");
+  }
+  const a = state.active;
+  const inTiers = a.tier in state.tiers;
+  $("override").innerHTML = inTiers ? "" :
+    `<span style="color:${TIER[a.tier]?.color}">●</span> 3層の外: <b>${TIER[a.tier]?.name || a.tier}</b> — ${a.label}`;
+  $("active-since").textContent = a.since ? `${(state.now - a.since).toFixed(1)}s 継続` : "";
+
+  // 60 s timeline: each command's tier lasts until the next command.
+  const c = $("timeline"), g = c.getContext("2d");
+  const w = c.clientWidth || c.width;
+  if (c.width !== Math.round(w)) c.width = Math.round(w);
+  g.clearRect(0, 0, c.width, c.height);
+  const span = 60, t0 = state.now - span, pts = state.timeline;
+  for (let i = 0; i < pts.length; i++) {
+    const [t, tier] = pts[i];
+    const end = i + 1 < pts.length ? pts[i + 1][0] : state.now;
+    const x0 = Math.max(0, (t - t0) / span * c.width), x1 = Math.min(c.width, (end - t0) / span * c.width);
+    if (x1 <= x0) continue;
+    g.fillStyle = TIER[tier]?.color || "#555";
+    g.globalAlpha = tier === "idle" ? 0.5 : 0.9;
+    g.fillRect(x0, 3, Math.max(1, x1 - x0), c.height - 6);
+  }
+  g.globalAlpha = 1;
 }
 
 function drawHeader() {
@@ -270,7 +362,7 @@ function drawHeader() {
 const es = new EventSource("/events");
 es.onmessage = (e) => {
   state = JSON.parse(e.data);
-  drawHeader(); drawMap(); drawLayers(); drawLog();
+  drawHeader(); drawTiers(); drawMap(); drawLayers(); drawLog();
 };
 es.onerror = () => { $("b-mqtt").textContent = "sim server offline"; $("b-mqtt").className = "badge bad"; };
 </script>
