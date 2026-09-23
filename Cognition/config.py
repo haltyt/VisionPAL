@@ -6,11 +6,14 @@ import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
 try:
-    from vp_env import env, env_int
+    from vp_env import env, env_int, env_float
 except ImportError:
     def env(k, d=None): return _os.environ.get(k, d)
     def env_int(k, d):
         try: return int(_os.environ.get(k, d))
+        except (TypeError, ValueError): return d
+    def env_float(k, d):
+        try: return float(_os.environ.get(k, d))
         except (TypeError, ValueError): return d
 
 # MQTT (.env: MQTT_HOST / MQTT_PORT)
@@ -43,6 +46,10 @@ TOPIC_NEURAL_SENSORY = "vision_pal/neural/sensory"
 TOPIC_NEURAL_ACTIVITY = "vision_pal/neural/activity"
 TOPIC_NEURAL_ACTION = "vision_pal/neural/action"
 TOPIC_NEURAL_MODULATION = "vision_pal/neural/modulation"
+
+# Jev (TypeSafe AI System One) behavior selection layer (.env: JEV_*)
+TOPIC_JEV_DECISION = "vision_pal/jev/decision"
+JEV_MIN_CONFIDENCE = env_float("JEV_MIN_CONFIDENCE", 0.55)
 
 # JetBot Camera (.env: CAMERA_URL / CAMERA_SNAP_URL)
 MJPEG_URL = env("CAMERA_URL", "http://192.168.3.12:8554/stream")

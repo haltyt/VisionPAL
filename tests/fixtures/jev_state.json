@@ -1,0 +1,12 @@
+{
+  "vision_pal/edge/state": {"blocked_prob": 0.12, "motor_running": false},
+  "vision_pal/neural/sensory": {"motion_left": 0.08, "motion_right": 0.21, "looming": 0.05, "luminance": 0.48, "contrast": 0.3, "frame_valid": true},
+  "vision_pal/survival/state": {
+    "drives": {
+      "novelty": {"name": "novelty", "level": 0.82, "urgent": true, "threshold": 0.7},
+      "social": {"name": "social", "level": 0.35, "urgent": false, "threshold": 0.7}
+    },
+    "dominant_drive": "novelty"
+  },
+  "vision_pal/body/state": {"cpu_temp": 52.5, "idle_sec": 40.0}
+}

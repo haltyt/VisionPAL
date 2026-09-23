@@ -27,13 +27,21 @@ AsyncVLA（非同期 Vision-Language-Action）は、高速な Edge 層、Connect
 │  ┌──────────────────────────────────────────────────────┐    │
 │  │ 🎯 Action Arbiter (行動調停)                         │    │
 │  │ emergency_stop(100) > retreat(90) > avoid(60)        │    │
-│  │ > explore(40) > social(30) > idle(0)                 │    │
+│  │ > explore(40) > jev(35) > social(30) > idle(0)       │    │
 │  │ ※ Edge層は常にCloud層をオーバーライド（安全最優先）   │    │
 │  └──────────────────────┬───────────────────────────────┘    │
 │                         ▼ MQTT: vision_pal/move              │
 │                   mqtt_robot.py → モーター                    │
 └──────────────────────────────────────────────────────────────┘
 ```
+
+### Jev 行動選択層（System One）
+
+[TypeSafe AI の Jev](https://docs.typesafe.ai/introduction) は、状態と型付きの質問を受け取り、確率と confidence 付きの回答を返す非自己回帰モデルです（テキストのみ、70〜500ms）。`Cognition/jev/jev_decider.py` は約 1Hz で Edge・Neural・Survival・Scene・Body の状態を英語の state にまとめ、次の行動を 1 つ選ばせます。
+
+- 前進系の行動（`explore_forward` / `approach_target`）は、blocked > 0.5、衝突から 2 秒未満、looming が escape しきい値以上のときは**コードで選択肢から外してから** Jev に渡す
+- confidence が `JEV_MIN_CONFIDENCE` 未満の回答、`other` の回答、`hazard_ahead` > 0.7 なのに前進系を選んだ回答は提案しない
+- 判断は `vision_pal/jev/decision` に publish し、AsyncVLA が `jev_behavior`(35) として調停する。反射と Survival が常に優先され、API が止まれば提案が途切れて idle に戻る
 
 ### レガシーパイプライン（フェーズ1）
 
@@ -65,6 +73,11 @@ VisionPAL/
 │   │   ├── neural_dynamics.py  7集団のLIF神経回路（既定672ニューロン）
 │   │   ├── connectome_backend.py 差し替え可能な脳バックエンド
 │   │   └── mqtt_connectome.py  カメラ・身体状態・MQTTブリッジ
+│   ├── jev/                    Jev (TypeSafe System One) 行動選択レイヤー
+│   │   ├── jev_client.py       /v1/systemone HTTP クライアント
+│   │   ├── state_builder.py    MQTT スナップショット → 英語 state
+│   │   ├── decider.py          合法行動マスク・質問・confidence ゲート
+│   │   └── jev_decider.py      MQTT サービス本体
 │   ├── explore_behavior.py    自律探索行動（novelty駆動）
 │   ├── vla_test.py            VLAパイプライン単体テスト
 │   ├── vla_test_v2.py         AsyncVLA二層統合テスト
@@ -165,6 +178,7 @@ idle 5分+ → novelty蓄積 → novelty > 0.8 → explore アクション発火
 | `vision_pal/neural/activity` | connectome → | 神経集団活動とmotor activity |
 | `vision_pal/neural/action` | connectome → async_vla | 回避反射の提案（モーターへ直送しない） |
 | `vision_pal/neural/modulation` | LLM/Survival → connectome | exploration/threat修飾値（任意） |
+| `vision_pal/jev/decision` | jev_decider → async_vla | Jev の行動選択（behavior, confidence, hazard） |
 | `vision_pal/move` | async_vla/explore/VisionPro → mqtt_robot | モーター制御 |
 | `vision_pal/monologue` | cognitive_loop → | 生成された独白 |
 | `vision_pal/affect/state` | cognitive_loop → | 感情状態 |
@@ -265,6 +279,13 @@ python3 async_vla.py
 python3 -m Cognition.connectome.mqtt_connectome --source "$CAMERA_URL" --no-mqtt
 # 出力を確認後、MQTT接続を有効化（指令はAsyncVLAが調停）
 python3 -m Cognition.connectome.mqtt_connectome --source "$CAMERA_URL"
+
+# 10. Jev 行動選択層（Cognition ホスト、.env に TYPESAFE_API_KEY が必要）
+# 固定の状態で 1 回だけ呼んで確認
+python3 -m Cognition.jev.jev_decider --no-mqtt --fixture tests/fixtures/jev_state.json --once
+# publish せずに実際の MQTT 状態で確認 → 問題なければ --dry-run を外す
+python3 -m Cognition.jev.jev_decider --dry-run
+python3 -m Cognition.jev.jev_decider
 
 # === Jetson ホスト (DualSense USB 直結時) ===
 # DualSense を USB ケーブルで接続後

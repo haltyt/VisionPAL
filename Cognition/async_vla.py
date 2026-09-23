@@ -43,6 +43,7 @@ MQTT Topics:
     vision_pal/survival/action     ← 自律行動指示
     vision_pal/perception/scene    ← VLMシーン
     vision_pal/neural/action       ← 神経層の回避提案
+    vision_pal/jev/decision        ← Jev (System One) の中位行動選択
   Publish:
     vision_pal/vla/state           ← VLA統合状態
     vision_pal/move                ← 最終行動指示
@@ -81,6 +82,7 @@ PRIORITY = {
     "neural_reflex": 65,     # Connectome: sensorimotor avoidance
     "avoid": 60,             # Edge: danger zone (blocked > 0.5)
     "explore": 40,           # Survival: novelty urgent
+    "jev_behavior": 35,      # Jev: mid-level behavior selection
     "seek_social": 30,       # Survival: social urgent
     "clean_space": 20,       # Survival: territory urgent
     "cloud_action": 10,      # Cloud: VLM suggested action
@@ -93,6 +95,17 @@ EDGE_ACTIONS = {
     "retreat": {"direction": "backward", "speed": 0.5, "duration": 1.0},
     "avoid": {"direction": "left", "speed": 0.4, "duration": 0.5},
 }
+
+# Jev behavior → モーター変換 (低速・短時間に限定)
+JEV_BEHAVIOR_MOVES = {
+    "explore_forward": {"direction": "forward", "speed": 0.35, "duration": 0.8},
+    "scan_left": {"direction": "left", "speed": 0.3, "duration": 0.4},
+    "scan_right": {"direction": "right", "speed": 0.3, "duration": 0.4},
+    "approach_target": {"direction": "forward", "speed": 0.25, "duration": 0.6},
+    "back_off": {"direction": "backward", "speed": 0.3, "duration": 0.5},
+    "rest": {"direction": "stop", "speed": 0.0, "duration": 0},
+}
+JEV_MAX_AGE_SEC = 3.0
 
 running = True
 
@@ -182,6 +195,8 @@ class AsyncVLAOrchestrator:
             "reason": "not_started",
         }
 
+        self.jev_state = {}
+
         # VLA統合状態
         self.cycle = 0
         self.last_action = None
@@ -213,6 +228,9 @@ class AsyncVLAOrchestrator:
         # Neural / Connectome層
         client.subscribe(cfg.TOPIC_NEURAL_ACTION)
 
+        # Jev行動選択層
+        client.subscribe(cfg.TOPIC_JEV_DECISION)
+
         # Cloud層
         client.subscribe(cfg.TOPIC_SURVIVAL)
         client.subscribe(cfg.TOPIC_SURVIVAL_ACTION)
@@ -221,6 +239,7 @@ class AsyncVLAOrchestrator:
         client.message_callback_add("vision_pal/edge/state", self._on_edge)
         client.message_callback_add(cfg.TOPIC_COLLISION, self._on_collision)
         client.message_callback_add(cfg.TOPIC_NEURAL_ACTION, self._on_neural_action)
+        client.message_callback_add(cfg.TOPIC_JEV_DECISION, self._on_jev_decision)
         client.message_callback_add(cfg.TOPIC_SURVIVAL, self._on_survival)
         client.message_callback_add(cfg.TOPIC_SURVIVAL_ACTION, self._on_survival_action)
         client.message_callback_add(cfg.TOPIC_SCENE, self._on_scene)
@@ -278,6 +297,23 @@ class AsyncVLAOrchestrator:
             self.neural_state = data
             self.arbiter.propose("connectome", "neural_reflex", data, ttl=0.75)
         except (TypeError, ValueError):
+            pass
+
+    def _on_jev_decision(self, client, userdata, msg):
+        """Jevの行動選択提案。反射・Survivalより低優先でarbiterを通す。"""
+        try:
+            data = json.loads(msg.payload)
+            behavior = data.get("behavior")
+            confidence = float(data.get("confidence", 0.0))
+            if behavior not in JEV_BEHAVIOR_MOVES:
+                return
+            if confidence < cfg.JEV_MIN_CONFIDENCE:
+                return
+            if time.time() - float(data.get("ts", 0.0)) > JEV_MAX_AGE_SEC:
+                return
+            self.jev_state = data
+            self.arbiter.propose("jev", "jev_behavior", data, ttl=1.5)
+        except (TypeError, ValueError, AttributeError):
             pass
 
     # ── Cloud層イベント ──
@@ -352,6 +388,15 @@ class AsyncVLAOrchestrator:
             self.mqtt.publish(cfg.TOPIC_MOVE, json.dumps(move_cmd, ensure_ascii=False))
             return
 
+        if action_type == "jev_behavior":
+            details = action.get("details", {})
+            move_cmd = JEV_BEHAVIOR_MOVES.get(details.get("behavior"), JEV_BEHAVIOR_MOVES["rest"]).copy()
+            move_cmd["source"] = "jev"
+            move_cmd["reason"] = details.get("behavior", "rest")
+            move_cmd["confidence"] = details.get("confidence", 0.0)
+            self.mqtt.publish(cfg.TOPIC_MOVE, json.dumps(move_cmd, ensure_ascii=False))
+            return
+
         # Survival系アクション → explore_behaviorに委譲
         if action_type in ("explore", "seek_social"):
             self.mqtt.publish(cfg.TOPIC_SURVIVAL_ACTION,
@@ -385,11 +430,13 @@ class AsyncVLAOrchestrator:
                 action["type"],
                 action.get("details", {}).get("direction"),
                 action.get("details", {}).get("vlm_action"),
+                action.get("details", {}).get("behavior"),
             )
             last_key = None if self.last_action is None else (
                 self.last_action["type"],
                 self.last_action.get("details", {}).get("direction"),
                 self.last_action.get("details", {}).get("vlm_action"),
+                self.last_action.get("details", {}).get("behavior"),
             )
             if last_key != action_key:
                 self._execute_action(action)
@@ -408,7 +455,8 @@ class AsyncVLAOrchestrator:
             # Direct motor actions must end explicitly because mqtt_robot keeps
             # the last command; its payload duration is metadata only.
             if self.last_action and self.last_action["type"] in (
-                    "emergency_stop", "retreat", "avoid", "neural_reflex", "cloud_action"):
+                    "emergency_stop", "retreat", "avoid", "neural_reflex", "cloud_action",
+                    "jev_behavior"):
                 self.mqtt.publish(cfg.TOPIC_MOVE, json.dumps({
                     "direction": "stop",
                     "speed": 0.0,
@@ -435,6 +483,11 @@ class AsyncVLAOrchestrator:
                     "confidence": self.neural_state.get("confidence", 0.0),
                     "reason": self.neural_state.get("reason", ""),
                 },
+                "jev": {
+                    "behavior": self.jev_state.get("behavior"),
+                    "confidence": self.jev_state.get("confidence", 0.0),
+                    "latency_ms": self.jev_state.get("latency_ms"),
+                },
                 "current_action": action["type"],
                 "action_source": action.get("source", "none"),
                 "action_priority": action["priority"],
@@ -450,6 +503,7 @@ class AsyncVLAOrchestrator:
         print("=" * 55)
         print("  Edge層: collision_detect_v2.py (CNN 5ms)")
         print("  Neural層: optical flow + LIF connectome (15-30Hz)")
+        print("  Jev層: System One behavior selection (1Hz)")
         print("  Cloud層: vlm_watcher + survival_engine (5-10s)")
         print("  Arbiter: safety > explore > social > idle")
         print("  Interval: {}ms".format(int(interval * 1000)))
